@@ -1,0 +1,14 @@
+# Web framework — added Week 3
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+
+# HTTP client — used by Salesforce client
+httpx>=0.27.0
+
+# Data validation — used everywhere
+pydantic>=2.9.0
+
+# Future additions (uncommented when each week starts):
+# anthropic>=0.40.0          # Week 5 — Claude API
+# aiosqlite>=0.20.0          # Week 7 — local cache
+# apscheduler>=3.10.0        # Week 7 — scheduled sync jobs
