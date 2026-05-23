@@ -1,3 +1,27 @@
+# ============================================================
+# PROJECT-SPECIFIC SECRETS — NEVER commit these
+# ============================================================
+sf_secrets.py
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+config.local.py
+secrets.json
+
+# Local database files (will be created in Week 7)
+*.db
+*.sqlite
+*.sqlite3
+
+# Test/scratch files I don't want in the repo
+scratch.py
+test_*.local.py
+*.tmp
+
+# ============================================================
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
