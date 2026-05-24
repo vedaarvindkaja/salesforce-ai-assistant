@@ -144,3 +144,39 @@ Notes for future self:
 - Always have 2 terminals: one for server, one for everything else
 - Run uvicorn from inside backend/ folder, not project root
 - favicon.ico 404 is normal — every browser asks for it
+
+### Week 3 Day 3 — Path params, query validation, error handling (with debugging story)
+
+What I built:
+- GET /accounts/{id} — single account lookup with 404 handling
+- GET /accounts/search/ — optional industry + revenue filters
+- Upgraded /accounts/ with Query(ge=1, le=100) validation
+
+DEBUGGING STORY (took ~45 min to resolve):
+
+Symptom: All /accounts/* URLs returning 404, but /health worked.
+
+Things I tried (didn't fix):
+- Reordered routes so /{account_id} comes last (still correct to do, but not the issue)
+- Cleared __pycache__ folders
+- Restarted uvicorn cleanly
+
+Actual root cause: main.py never imported or included the accounts router!
+I had created routes/accounts.py but forgot to add to main.py:
+   from app.routes import accounts
+   app.include_router(accounts.router)
+
+Without those two lines, FastAPI has no idea those routes exist.
+
+Misleading clue: 422 validation errors look scary but are a SUCCESS signal — 
+they prove your validation rules are working. `{"detail": [{"type": "...", "loc": ..."}]}` 
+is FastAPI's standard error format. Status code 422 = "input failed validation."
+
+Lessons:
+1. Adding a new router requires TWO files: the routes file + main.py update
+2. 404 vs 422 are different things — 404 = URL not registered, 422 = bad input
+3. When debugging routes, check /openapi.json or /docs to see what FastAPI 
+   actually knows about
+4. The Problems tab in VS Code is your friend — silent import errors hide there
+
+Next: Day 4 — lifespan management, dependency injection
