@@ -180,3 +180,56 @@ Lessons:
 4. The Problems tab in VS Code is your friend — silent import errors hide there
 
 Next: Day 4 — lifespan management, dependency injection
+
+### Week 3 Day 4 — Lifespan + dependency injection
+
+What I changed:
+- Added @asynccontextmanager lifespan function in main.py
+- Salesforce client now created ONCE at startup, stored in app.state
+- Created backend/app/dependencies.py with get_sf_client() function
+- Endpoints now receive client via Depends(get_sf_client) instead of creating their own
+
+Took: ~2 hours
+
+Key concepts:
+- @asynccontextmanager: code before `yield` runs at startup, after runs at shutdown
+- app.state: container for app-wide shared resources
+- Depends(): FastAPI auto-calls the function and injects the result into endpoints
+
+Why this matters:
+- Authentication happens ONCE, not per-request
+- Endpoints are cleaner (no async with, no authenticate calls)
+- Easy to swap MockSalesforceClient for real SalesforceClient later
+- Standard production pattern — used in every real FastAPI app
+
+Visible difference:
+- Startup terminal shows "Starting Salesforce client..." / "Salesforce client ready."
+- Shutdown terminal shows "Closing Salesforce client..."
+- Each request is ~0.3s faster (no re-auth)
+
+
+### Week 3 Day 5 — CORS + batch endpoint
+
+What I added:
+- CORSMiddleware in main.py (allows browser frontends to call this API)
+- POST /accounts/batch endpoint that runs multiple queries concurrently
+- New Pydantic models: BatchQueryRequest, BatchQueryResult
+
+Took: ~2 hours
+
+Key concepts:
+- CORS = browser security feature that blocks cross-origin requests by default
+- Middleware = code that runs before/after every request
+- POST with JSON body for sending complex inputs (vs GET with query params)
+- *request.queries = Python unpacking operator (list -> individual args)
+- asyncio.gather (inside query_all) runs N queries concurrently
+
+Visible results:
+- 3 queries take ~0.8s total instead of ~2.4s sequential
+- Access-Control-Allow-Origin: * header now present in all responses
+
+Why this matters:
+- Week 8 React frontend will be able to call this API without CORS errors
+- Week 6 Claude tool use will use this pattern for multi-step queries
+
+Next: Day 6 — pytest tests for all endpoints

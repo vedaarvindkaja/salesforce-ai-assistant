@@ -155,6 +155,30 @@ Expected: Empty array [] (Edge has 139M, doesn't meet 500M threshold)
 
 ---
 
+---
+
+### Test 16b — Batch queries (POST endpoint, test via /docs)
+
+URL: http://localhost:8000/docs
+
+How to test:
+1. Find POST /accounts/batch in the docs
+2. Click "Try it out"
+3. Use this request body:
+
+       {
+         "queries": [
+           "SELECT Id, Name FROM Account LIMIT 3",
+           "SELECT Id, Name FROM Account WHERE Industry = 'Electronics'",
+           "SELECT Id, Name FROM Account WHERE AnnualRevenue > 100000000"
+         ]
+       }
+
+4. Click "Execute"
+
+Expected: Response with total_queries=3, total_records=9, results array with 3 inner arrays.
+Notice: response takes ~0.8 seconds (not 2.4s) — proves async concurrency works.
+
 ## 🔴 Tests that should FAIL with proper error messages
 
 These are NOT bugs — they prove your validation and error handling work correctly.
