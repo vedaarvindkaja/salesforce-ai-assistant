@@ -2,11 +2,16 @@
 
 from fastapi import FastAPI
 
+from app.routes import accounts
+
 app = FastAPI(
     title="Salesforce AI Assistant API",
     description="Backend API for the Salesforce AI Assistant project.",
     version="0.1.0",
 )
+
+# Include routers for each logical group of endpoints
+app.include_router(accounts.router)
 
 
 @app.get("/health")
