@@ -128,3 +128,19 @@ doesn't hurt learning the same way.
 - ✅ Confirmed .gitignore protects sf_secrets.py and .env files
 - ✅ Wrote initial NOTES.md
 - Next: Move existing Pydantic + async code into backend/ folder, then start Week 3
+
+### Week 3 Day 1 — FastAPI setup
+
+- Installed FastAPI, uvicorn, httpx
+- Created backend/app/main.py with /health endpoint
+- Server runs on http://localhost:8000
+- /docs page auto-generates Swagger UI
+- Tested endpoint via browser and curl
+- Practiced git from terminal (add/commit/push)
+
+Took: ~1.5 hours
+
+Notes for future self:
+- Always have 2 terminals: one for server, one for everything else
+- Run uvicorn from inside backend/ folder, not project root
+- favicon.ico 404 is normal — every browser asks for it
