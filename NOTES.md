@@ -265,3 +265,80 @@ Why this matters:
 - Confidence to refactor knowing tests will catch breakage
 
 Next: Day 7 — README polish + Week 3 retrospective
+
+
+---
+
+## Week 3 Retrospective
+
+### What I built
+- Full-featured FastAPI backend (6 endpoints + /docs)
+- Pydantic models for type-safe Salesforce data
+- Async architecture with concurrent query support
+- Mock + real client pattern (same interface, swappable)
+- Lifespan-managed singleton client
+- Dependency injection pattern
+- CORS middleware for future React frontend
+- 14 pytest integration tests
+- Professional documentation (README, TEST_URLS, NOTES)
+
+### Total time invested
+About 13 hours across 7 days. Roughly:
+- Day 1 (setup + /health): 1.5h
+- Day 2 (first real endpoint): 1.5h
+- Day 3 (path params, validation, debugging): 2.5h
+- Day 4 (lifespan + DI): 2h
+- Day 5 (CORS + batch endpoint): 2h
+- Day 6 (pytest tests): 2h
+- Day 7 (README polish): 1.5h
+
+### Biggest learning moments
+
+**Day 3 — route ordering and the missing router registration**
+Spent 45 minutes debugging a 404 on /accounts/. Two issues stacked:
+1. The accounts router wasn't imported into main.py
+2. /{account_id} wildcard route was matching before specific routes
+
+Lesson: when adding a new router, BOTH files need changes (route file + main.py).
+And specific routes go BEFORE wildcard routes always.
+
+**Day 4 — lifespan + dependency injection clicked**
+The shift from "create client per request" to "create client once, inject it"
+felt magical. The endpoints became dramatically cleaner. This is the pattern
+every production FastAPI app uses.
+
+**Day 5 — async concurrency pays off visibly**
+The batch endpoint demonstrated the value of asyncio.gather. 3 queries in 0.8s
+instead of 2.4s. Will matter a lot when Claude makes multi-step queries.
+
+**Day 6 — pytest is delightful**
+Was expecting tests to be tedious. Actually fun — write a test, run it, see
+it pass. Then deliberately break code to watch tests catch it. Now I trust
+my codebase.
+
+### What I'd do differently
+
+- Set up the file structure (Day 0) more thoroughly. Some folders existed
+  but weren't used until later — should have planned them upfront.
+- Commit more frequently. Combined Day 4+5 into one commit because I forgot
+  to commit Day 4 on its own. Not bad, but cleaner history would have been
+  better.
+- Run `git status` after every `git add` to verify what's staged. Avoided
+  one weird "NOTES.md wasn't added" issue this way.
+
+### What surprised me
+
+- FastAPI's `/docs` page is genuinely magical. I spent more time there than
+  I expected, and it became my primary testing tool.
+- Pydantic does so much heavy lifting — validation, serialization, OpenAPI
+  schema generation, all from type hints. I appreciate it more now.
+- Async is much less scary than I thought. The mental model from Week 2
+  carried over cleanly.
+
+### What's next (Week 4)
+
+Fix the Salesforce auth issue (External Client App → classic Connected App).
+Once real data is flowing, all 14 tests should still pass (they test against
+the mock, but the structure is identical).
+
+Then Week 5: wire up Claude API for /chat endpoint.
