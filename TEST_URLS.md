@@ -4,6 +4,21 @@ A reference list of URLs to test all endpoints. Open each URL in your browser
 to verify the API works as expected.
 
 ## How to use
+---
+
+## Automated Tests (recommended way to verify everything)
+
+Instead of manually visiting every URL, run the automated test suite:
+
+    cd backend
+    pytest tests/ -v
+
+This runs all tests in ~5 seconds and confirms every endpoint works correctly.
+Use this whenever you change code to catch regressions.
+
+Manual URL testing below is useful for exploring behavior interactively.
+
+---
 
 1. Start the server in your backend terminal:
 

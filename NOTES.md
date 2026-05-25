@@ -233,3 +233,35 @@ Why this matters:
 - Week 6 Claude tool use will use this pattern for multi-step queries
 
 Next: Day 6 — pytest tests for all endpoints
+
+
+### Week 3 Day 6 — Automated tests with pytest
+
+What I added:
+- pip install pytest pytest-asyncio
+- Updated requirements.txt with testing dependencies
+- Created backend/tests/test_endpoints.py with 14 tests
+- Tests cover all endpoints: health, list, get by id, search, batch
+- Tests cover both success (200) and error (404, 422) cases
+
+Took: ~2 hours
+
+Key concepts:
+- pytest fixtures = reusable setup; @pytest.fixture decorator
+- TestClient = simulates HTTP requests without running a real server
+- `with TestClient(app) as client` triggers FastAPI lifespan correctly
+- Tests are just functions starting with `test_`
+- `assert` is the only "special" syntax
+
+Verification:
+- pytest tests/ -v runs all 14 tests in ~5 seconds
+- All pass — confirms entire API works as expected
+- Tested intentionally breaking /health → test caught it instantly
+
+Why this matters:
+- Catches regressions when I change code in Weeks 4-6
+- Documents what each endpoint should do
+- Recruiter signal — most portfolio projects lack tests
+- Confidence to refactor knowing tests will catch breakage
+
+Next: Day 7 — README polish + Week 3 retrospective
