@@ -5,8 +5,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routes import accounts
-from app.services.salesforce_mock import MockSalesforceClient
+from app.interfaces.rest_api.routes import accounts
+from app.salesforce.mocks.rest_mock import MockSalesforceClient
 
 
 @asynccontextmanager
@@ -18,9 +18,9 @@ async def lifespan(app: FastAPI):
     await client.authenticate()
     app.state.sf_client = client
     print("Salesforce client ready.")
-    
+
     yield
-    
+
     print("Closing Salesforce client...")
     await client.__aexit__(None, None, None)
 

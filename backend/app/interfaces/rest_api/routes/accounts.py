@@ -1,9 +1,11 @@
 """Account-related API endpoints."""
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
+
 from app.dependencies import get_sf_client
 from app.models.salesforce import Account
-from app.services.salesforce_mock import MockSalesforceClient
+from app.salesforce.mocks.rest_mock import MockSalesforceClient
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
 
@@ -14,7 +16,7 @@ async def list_accounts(
     client: MockSalesforceClient = Depends(get_sf_client),
 ) -> list[Account]:
     """List accounts (currently using mock data).
-    
+
     Args:
         limit: Maximum number of records to return (1-100, default: 10)
     """
@@ -29,18 +31,18 @@ async def search_accounts(
     client: MockSalesforceClient = Depends(get_sf_client),
 ) -> list[Account]:
     """Search accounts by industry and/or minimum revenue.
-    
+
     Both parameters are optional. If neither is provided, returns all accounts.
     """
     result = await client.query("SELECT Id, Name FROM Account")
     records = result.records
-    
+
     if industry:
         records = [r for r in records if r.Industry == industry]
-    
+
     if min_revenue is not None:
         records = [r for r in records if (r.AnnualRevenue or 0) >= min_revenue]
-    
+
     return records
 
 
@@ -50,14 +52,14 @@ async def get_account(
     client: MockSalesforceClient = Depends(get_sf_client),
 ) -> Account:
     """Get a single account by ID.
-    
+
     Raises:
         404 if no account with that ID exists.
     """
     result = await client.query(
         f"SELECT Id, Name FROM Account WHERE Id = '{account_id}'"
     )
-    
+
     # In mock mode, the client returns all 3 accounts regardless of WHERE clause.
     # Manually filter to simulate proper behavior.
     matching = [r for r in result.records if r.Id == account_id]
@@ -72,8 +74,6 @@ async def get_account(
 # ============================================================
 # Batch queries — demonstrates async concurrency
 # ============================================================
-
-from pydantic import BaseModel
 
 
 class BatchQueryRequest(BaseModel):
@@ -94,7 +94,7 @@ async def run_batch_queries(
     client: MockSalesforceClient = Depends(get_sf_client),
 ) -> BatchQueryResult:
     """Run multiple SOQL queries concurrently.
-    
+
     Demonstrates async benefits — N queries run in the time of ~1
     instead of running sequentially.
     """
