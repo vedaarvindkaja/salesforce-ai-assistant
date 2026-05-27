@@ -342,3 +342,116 @@ Once real data is flowing, all 14 tests should still pass (they test against
 the mock, but the structure is identical).
 
 Then Week 5: wire up Claude API for /chat endpoint.
+
+### 2026-05-28 — Strategic pivot: developer intelligence platform
+
+Reframed the project from "generic Salesforce AI assistant" to "AI metadata
+graph for Salesforce developers." Reasoning:
+
+- The original framing ("AI-powered CRM assistant") competes directly with
+  Salesforce's own AI tools, which target business users. I have no edge there.
+- Where I do have edge: 10 years of Salesforce developer experience. The pain
+  of changing a field and not knowing what'll break, of debugging Apex without
+  full org context, of writing SOQL against an org I can't fully remember —
+  these are problems I know intimately.
+- Developer tools are easier to evaluate (you can immediately tell when output
+  is wrong) which makes the build-measure-learn loop tighter.
+- Open-core strategy: MCP server and metadata extractor open source, advanced
+  features proprietary. Builds community credibility and leaves business optionality.
+
+Five MVP capabilities (all developer-facing):
+1. Metadata Q&A
+2. Apex explanation/refactoring
+3. SOQL generation with metadata awareness
+4. Deployment impact analysis
+5. Debug log analysis
+
+Phase 2+ (admin, sales, support, cross-system) deferred. Captured in ROADMAP.md
+section 8.
+
+The full 15-week Phase 1 plan lives in ROADMAP.md. NOTES.md remains the journal;
+ROADMAP.md is the plan; README.md is the public face.
+
+---
+
+## Daily log (continued)
+
+### Week 4 Day 1 — Folder structure refactor
+
+Reorganized the codebase into the layered structure from ROADMAP section 3:
+- `app/services/` → `app/salesforce/` (data layer)
+- `app/routes/` → `app/interfaces/rest_api/routes/` (consumer-facing)
+- `services/salesforce_mock.py` → `salesforce/mocks/rest_mock.py`
+- `services/salesforce.py` → `salesforce/rest_api.py`
+
+Relaxed `dependencies.get_sf_client()` return type from `MockSalesforceClient`
+to `Any`. Reasoning: Day 3-5 swaps in the real client; the dependency function
+shouldn't need to know which. Eventually this becomes a Protocol once both
+clients exist and the contract is clear.
+
+All 14 tests still passing after the move.
+
+Took: ~2.5 hours (budget was 1.5-2h).
+
+**Debugging story — silent file clobbering:**
+
+After `git mv` correctly moved `salesforce_mock.py` and `salesforce.py` to
+their new locations, both files got silently emptied. Tests started failing
+with `ImportError: cannot import name 'MockSalesforceClient' from
+'app.salesforce.mocks.rest_mock'` — Python found the module but the file was
+empty.
+
+Recovery: `git checkout -- <path>` restored the content from the staged
+rename. Git knew where the file went and what was in it; the on-disk version
+was the thing that got corrupted.
+
+Root cause (best guess): VS Code had the old paths open in tabs. After
+`git mv`, the editor's in-memory buffers and the on-disk files were out of
+sync. Some interaction — a save prompt, an extension auto-formatting, a
+tab close — overwrote the new location with an empty buffer.
+
+Lessons:
+1. **Close all VS Code tabs before doing `git mv` on those files.** The shell
+   is the source of truth during refactors. The editor only confuses things.
+2. **Trust `git status`.** When it shows `renamed:` + `deleted:` on the same
+   file, that's Git telling you "I moved this, then someone deleted it." The
+   message reads as confusing but it's precise.
+3. **`git checkout -- <path>` restores a staged-but-deleted file** without
+   undoing the rename. Useful muscle memory.
+4. **`git mv` preserves history**; drag-and-drop in File Explorer shows up
+   as delete-plus-add. Always use `git mv` for structural refactors.
+
+Verifying file sizes after refactors is a 10-second sanity check that catches
+silent corruption that tests might miss (a clobbered docstring doesn't fail
+tests).
+
+### Week 4 Day 2 — Sweep, docs, merge
+
+What I did:
+- Searched the codebase for stragglers referencing old paths (`app.services`,
+  `app.routes`). Zero real hits. Three false positives — `NOTES.md` historical
+  entry (correct to leave alone), README's `models/salesforce.py` reference
+  (different file, false match), ROADMAP's target structure diagram (also
+  references the Pydantic models file).
+- Rewrote README.md to reflect the strategic pivot and the new architecture.
+  Kept the "What's working today" section honest — still 6 REST endpoints with
+  mock data, but reframed as foundation for the intelligence layer rather than
+  as the product.
+- Updated this NOTES.md (Day 1 entry + this Day 2 entry + the strategic pivot
+  decision).
+- Merged `week-4-refactor` branch into `main` and pushed.
+
+Took: ~1.5 hours.
+
+Key concept reinforced — **separation of "history" docs vs "current state"
+docs**. NOTES.md is a journal: past entries describe what was true at the
+time and never get edited. README.md is current state: rewritten freely as
+the project changes. ROADMAP.md is the plan: updated when priorities shift,
+not when individual days complete.
+
+Confused these once during the sweep — almost edited a Week 3 Day 3 NOTES
+entry referencing `app.routes` (the old import path). Caught myself in time.
+That entry is a record of what I knew when I knew it; falsifying it would
+erase the learning trail.
+
+Next: Day 3 — Salesforce Connected App + OAuth 2.0 Web Server Flow.
