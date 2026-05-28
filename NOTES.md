@@ -455,3 +455,52 @@ That entry is a record of what I knew when I knew it; falsifying it would
 erase the learning trail.
 
 Next: Day 3 — Salesforce Connected App + OAuth 2.0 Web Server Flow.
+
+### Week 4 Day 3 — Salesforce OAuth 2.0 Web Server Flow with PKCE
+
+What I built:
+- `app/salesforce/oauth_models.py` — Pydantic models for OAuth responses
+- `app/salesforce/auth.py` — OAuth protocol logic: PKCE generation,
+  authorize URL building, code-for-token exchange, refresh token support
+- `app/salesforce/token_storage.py` — JSON file persistence for tokens
+- `app/interfaces/rest_api/routes/auth.py` — /auth/login, /auth/callback,
+  /auth/status endpoints
+- New Salesforce-side: External Client App with Web Server Flow + PKCE
+  + Refresh Token Rotation enabled
+
+End-to-end verified: clicked /auth/login → redirected to Salesforce login →
+logged in → clicked Allow → redirected back to /auth/callback → tokens
+exchanged and saved to tokens.json → used access_token to call /sobjects/
+endpoint → got back 1241 SObjects from real org schema.
+
+Took: ~5 hours (across Day 3 Part 1 + Part 2, including the External
+Client App setup and 10-minute propagation wait).
+
+### Strategic pivot: External Client App over Connected App
+
+Started Day 3 planning to use a classic Connected App. Salesforce's UI
+no longer shows the "New Connected App" button in newer org versions —
+only "New External Client App." Researched the current state of External
+Client Apps (mid-2026): they now fully support Web Server Flow with PKCE,
+the previous limitations were only on the deprecated username-password
+flow which we weren't using anyway.
+
+Decision: switched to External Client App. It's the forward path Salesforce
+is steering everyone toward, and using a deprecated path on a portfolio
+project sends the wrong signal. PKCE adds ~15 lines of Python; Refresh
+Token Rotation means we must replace the stored refresh_token after each
+refresh (Phase 1 doesn't refresh yet, but Day 5+ will).
+
+Captured as ADR in the Day 3 commit message; should formalize into
+docs/decisions/ in Week 14.
+
+### Key technical concepts (Apex-developer perspective)
+
+- **PKCE (Proof Key for Code Exchange)** — generate a random verifier
+  server-side; send sha256(verifier) base64url-encoded as the "challenge"
+  in the authorize URL; send the original verifier when exchanging the
+  code for tokens. Salesforce verifies they match. Prevents an attacker
+  who intercepts the redirect from completing the flow.
+
+- **Server-side flow state** — the PKCE verifier must persist between
+  /auth/login (when we generate it) a
