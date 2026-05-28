@@ -5,14 +5,14 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.interfaces.rest_api.routes import accounts
+from app.interfaces.rest_api.routes import accounts, auth
 from app.salesforce.mocks.rest_mock import MockSalesforceClient
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage app-wide resources (created at startup, cleaned up at shutdown)."""
-    print("Starting Salesforce client...")
+    print("Starting Salesforce client (mock for now — real client lands Day 4 end)...")
     client = MockSalesforceClient()
     await client.__aenter__()
     await client.authenticate()
@@ -48,9 +48,16 @@ app.add_middleware(
 
 # Include routers for each logical group of endpoints
 app.include_router(accounts.router)
+app.include_router(auth.router)
 
 
 @app.get("/health")
 async def health_check() -> dict:
     """Simple endpoint to verify the server is running."""
     return {"status": "ok", "message": "Salesforce AI Assistant is alive"}
+
+
+# No direct Apex equivalent — FastAPI entry point and middleware setup is
+# framework-specific infrastructure; Apex equivalents would be platform-managed
+# (no entry-point file, no middleware concept — request handling is built into
+# the @RestResource framework).

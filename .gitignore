@@ -1,6 +1,11 @@
 # ============================================================
 # PROJECT-SPECIFIC SECRETS — NEVER commit these
 # ============================================================
+
+# OAuth tokens — Week 4
+tokens.json
+backend/tokens.json
+
 sf_secrets.py
 .env
 .env.local
