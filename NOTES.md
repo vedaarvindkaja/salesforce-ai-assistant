@@ -940,4 +940,237 @@ session state, that's when I'd split the mock. Not before.
   fresh markdown files up front meant some back-and-forth as I refined
   ADR-003 mid-session. Eith
 
+  ### Week 5 Day 2 — ToolingAPIClient + first real-org verification
+
+What I did:
+- Built Pydantic models for the 6 core Tooling API record types in
+  `app/models/tooling.py`:
+  - ApexClass, ApexTrigger, EntityDefinition, CustomField,
+    ValidationRule, FlowDefinition
+  - Plus a generic `ToolingQueryResponse[T]` envelope using
+    Pydantic v2 + Python generics — one wrapper, six uses
+- Built `ToolingAPIClient` in `app/salesforce/tooling_api.py`:
+  - 6 typed query methods (one per record type)
+  - `query_raw()` escape hatch for ad-hoc SOQL
+  - `extract_all_for_graph()` — fires all 6 queries concurrently
+    via `asyncio.gather`
+  - REQUIRES a SalesforceHTTPClient in constructor (no fallback
+    to internal creation — composition is mandatory)
+- 10 new unit tests in `tests/test_tooling_api.py` using
+  `httpx.MockTransport`
+- Real-org verification script at `scripts/verify_tooling_api.py`
+  with the `python -m scripts.verify_tooling_api` invocation pattern
+- All 29 tests passing (14 endpoints + 5 HTTP client + 10 tooling)
+
+Took: ~4.5 hours.
+
+### The headline number — concurrent extraction proved out
+
+Real-org verification ran `extract_all_for_graph()` against my dev
+org. Six Tooling API queries fired concurrently via `asyncio.gather`:
+
+| Query | Sequential (sum) | Concurrent (gather) |
+|---|---|---|
+| apex_classes (42) | 0.29s | |
+| apex_triggers (1) | 0.20s | |
+| entity_definitions (211) | 0.26s | |
+| custom_fields (57) | 0.19s | |
+| validation_rules (5) | 0.13s | |
+| flow_definitions (6) | 0.12s | |
+| **TOTAL** | **1.19s sum** | **0.27s wall time** |
+
+That's a 4.4× speedup — concurrent wall time is roughly the time of
+the slowest single query, which is exactly what `asyncio.gather` is
+supposed to deliver. This matters enormously for Week 8 when Claude
+tool use chains 3-4 metadata queries per user question. The Apex
+parallel (Continuation API) only works from Visualforce/Lightning
+contexts and is significantly more complex.
+
+### The FlowDefinition.MasterLabel saga — why we verify against real orgs
+
+The lesson of the day. First real-org run blew up:
+
+    pydantic_core.ValidationError: 5 validation errors for
+    ToolingQueryResponse[FlowDefinition]
+    records.0.MasterLabel
+      Input should be a valid string [type=string_type,
+      input_value=None, input_type=NoneType]
+
+Five of five FlowDefinitions in my dev org returned `MasterLabel=null`,
+breaking the non-Optional `MasterLabel: str` declaration.
+
+My initial hypothesis: "system-generated or managed-package flows
+bypass the 'label required' UI." Fixed by making MasterLabel
+Optional[str] = None, re-ran the script.
+
+Second run revealed my hypothesis was wrong. The flows weren't
+system-generated — they had clearly meaningful names:
+- Update_Contact_Phone_When_Account_Phone_Updates
+- Opportunity_Approval_Orchestrator
+- Evaluate_Pricing_Need
+- URSIP_Opportunity_After_Save
+- PlatFormEventFlow_MuleSoft
+
+All ACTIVE flows. All with null MasterLabel. The actual finding was
+different: **MasterLabel via the Tooling API's FlowDefinition SOQL
+path is unreliable across the board, not just for edge cases.** The
+real label likely lives on the `Flow` record (the version), not on
+`FlowDefinition` (the wrapper). The schema exposes it but the data
+path doesn't populate it.
+
+This is a real Salesforce platform quirk that anyone building Tooling
+API tools needs to know. Documented in the model docstring and the
+test fixture. Future engineers reading the code will learn the lesson
+without having to hit the failure themselves.
+
+Implications for Week 6's graph (parked for Day 1 of Week 6):
+- Use `DeveloperName` as the graph node's display label (reliable —
+  every flow had a meaningful one)
+- OR fetch the Flow record at `ActiveVersionId` for the real label
+- Decision deferred until the graph builder needs labels
+
+The Apex-developer takeaway: even 10 years of Salesforce experience
+doesn't immunize you against platform quirks in less-common APIs.
+The Tooling API is "REST/JSON like the data API" until it isn't.
+**Real-org verification is non-negotiable for every new API surface.**
+
+### Key technical concepts (Python ↔ Apex)
+
+- **Pydantic v2 generics.** `ToolingQueryResponse[ApexClass]` is one
+  class doing six jobs via `Generic[T]` and `TypeVar`. The runtime
+  type system tracks which T is bound; `.records` is typed
+  `list[ApexClass]` for one and `list[FlowDefinition]` for another.
+  Apex generics are restricted to platform types (List, Map, Set);
+  you can't declare your own generic class, so you'd duplicate the
+  response wrapper 6 times.
+
+- **`asyncio.gather` vs Apex Continuation.** Python's `gather`
+  accepts N coroutines and waits for all in parallel. Apex's
+  Continuation API does the same thing but only in VF/LWC contexts,
+  requires explicit callback wiring, and limits you to 3 callouts.
+  Python's version is 1 line of code, no context restrictions, no
+  callout count limit.
+
+- **Keyword-only arguments via `*` in def.** The `query_apex_classes`
+  signature is
+  `def query_apex_classes(self, *, include_body=False, where=None,
+  limit=None)`. The bare `*` forces all subsequent parameters to be
+  passed by name. `query_apex_classes(True, "x", 10)` won't compile;
+  `query_apex_classes(include_body=True, where="x", limit=10)` is
+  required. Self-documenting API design. Apex has no equivalent;
+  you'd use method overloading or a request struct.
+
+- **Required composition (no default constructor fallback).**
+  ToolingAPIClient takes `http: SalesforceHTTPClient` as required,
+  not optional. There's no "create my own HTTP client if you didn't
+  give me one" path. This forces correct usage (the lifespan owns
+  the HTTP client; consumers borrow it) and prevents the hidden-state
+  bug pattern from Week 4 Day 4. RestAPIClient still has the optional
+  fallback for backwards compatibility — to be cleaned up in Week 6.
+
+- **The `python -m module.path` convention.** Project scripts live
+  in `backend/scripts/` and are invoked as
+  `python -m scripts.verify_tooling_api`, not
+  `python scripts/verify_tooling_api.py`. The latter doesn't find
+  `app/` in the import path. The former treats `backend/` as the
+  package root and resolves imports correctly. This is the standard
+  Python pattern — adopt it for every script we add. Apex has no
+  equivalent because the platform owns invocation; you never write
+  the entry point.
+
+### What I'd do differently
+
+- **Earlier reality-check on the mock data shapes.** I wrote mock
+  responses that assumed Salesforce's documented shape was the
+  actual shape. The FlowDefinition.MasterLabel failure could have
+  been caught by a 10-minute spike into a real org BEFORE writing
+  the Pydantic model. Lesson for Day 3+: when adding new metadata
+  types, query one record from the real org with the relevant
+  SObject fields BEFORE designing the model. The 5 minutes saves
+  iteration cycles later.
+
+- **Sharing verification output more reliably.** Partway through
+  Day 2 I told Claude "29 tests passed" without sharing the
+  verification script's output. Claude correctly pushed back — tests
+  prove the unit-level code works against mock data; the script
+  proves it works against real Salesforce. They're different
+  proofs. Adopting the discipline: every real-world verification
+  step produces output that gets shared, not just a thumbs-up.
+
+- **Initial hypothesis was wrong; second look corrected it.** When
+  the MasterLabel failure first surfaced, I (well, Claude) jumped
+  to "system-generated flows" as the cause. The second run showed
+  that was wrong — the real finding was "MasterLabel is broadly
+  unreliable on this query path." First findings deserve a second
+  pass before they become committed conclusions. The commit
+  history captures both: the first commit makes MasterLabel
+  Optional with the wrong reason, the second commit corrects the
+  reasoning. That's the right shape for engineering history.
+
+### What surprised me
+
+- **211 EntityDefinitions in a dev org.** I expected ~50-80. Real
+  orgs (even fresh dev orgs) have a lot of standard objects
+  including ones I've never used. Week 6's graph will need to be
+  thoughtful about whether to include all of them or filter to
+  "objects with user-relevant metadata."
+
+- **Concurrent extraction at 0.27s wall time.** I expected 0.5-1.0s;
+  it came in under. Asyncio's overhead is genuinely small, and
+  Salesforce's API can serve 6 concurrent Tooling queries from one
+  authenticated session without rate limiting.
+
+- **Only 1 ApexTrigger in this org.** This dev org is metadata-heavy
+  (211 objects, 57 custom fields) but Apex-light. For Week 6's graph,
+  the demo questions might lean more on "what depends on this field"
+  than "what does this trigger touch" depending on the org. Good to
+  know now.
+
+- **Pydantic's error messages are excellent.** The ValidationError
+  output told me the field path (`records.0.MasterLabel`), the
+  expected type (str), the actual value (None), and gave a docs
+  link. In Apex this would be a vague `JSONException`. Python's
+  ecosystem is genuinely better here for the dev-tool category we're
+  building.
+
+### Scope I noticed but parked
+
+- **`EntityDefinitionId` / `TableEnumOrId` inconsistency.** Some
+  records reference parent objects by API name ("Account"), others
+  by Id ("01IdM00000EO9Zy"). Same conceptual relationship, two
+  different shapes. Week 6's graph builder needs to normalize. Not
+  a Day 2 problem.
+
+- **ValidationRule metadata expansion.** ErrorConditionFormula
+  isn't a top-level field; it lives under `Metadata` and requires
+  a different SOQL query shape. Day 3 or Week 6 will decide.
+
+- **Whether to use DeveloperName vs ActiveVersion's label as the
+  Flow display name in the graph.** Parked for Week 6.
+
+- **Pagination.** `nextRecordsUrl` would fire if we hit >2000
+  records in one query. Day 2 doesn't follow pagination; the
+  `ToolingQueryResponse` model captures `nextRecordsUrl` for later.
+  Phase 2 problem.
+
+### What's next (Day 3)
+
+Day 3 of ROADMAP Week 5 is more Tooling API + Metadata API integration.
+With Day 2's foundation solid, Day 3 options are:
+
+1. **Add ValidationRule metadata expansion** so the parser (Week 7)
+   can extract field references from ErrorConditionFormula
+2. **Add FieldDefinition** for standard-field coverage (Phase 1
+   currently only does CustomField)
+3. **Start Day 5-6's storage layer** — write extracted JSON to
+   `app/intelligence/graph/extracted/` per-type files
+
+Recommended Day 3 plan (will confirm at start of next session):
+spike on ValidationRule metadata expansion (smallest scope), then
+move into storage. The graph (Week 6) needs both formula contents
+and persisted JSON to work.
+
+Day 2 done. Foundation for Week 5 is solid: real-org-verified Tooling
+API client, 29 tests green, clean commits, documented platform quirks.
+
 ---
