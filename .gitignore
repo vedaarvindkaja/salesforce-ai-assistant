@@ -20,6 +20,10 @@ secrets.json
 *.sqlite
 *.sqlite3
 
+data/
+*.db
+*.db-journal
+
 # Test/scratch files I don't want in the repo
 scratch.py
 test_*.local.py
