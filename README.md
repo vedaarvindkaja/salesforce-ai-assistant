@@ -12,8 +12,11 @@ the Phase 1 plan (15 weeks to portfolio launch).
 
 ## Current status
 
-**Week 4 in progress** — Architecture refactor and Salesforce OAuth 2.0 setup.
-See [ROADMAP.md](./ROADMAP.md) for week-by-week plan.
+**Week 4 complete** ✅ — Salesforce OAuth 2.0 Web Server Flow with PKCE is
+working end-to-end. The backend can now authenticate against a real
+Salesforce org and run SOQL queries with transparent token refresh.
+
+Next: metadata graph construction (Weeks 5-7).
 
 ## Project vision
 
@@ -31,13 +34,15 @@ and support features may come in Phase 2.
 
 ## What's working today
 
-- 6 working REST endpoints (mock data) — foundation for the upcoming intelligence layer
+- **Real Salesforce authentication** via OAuth 2.0 Web Server Flow with PKCE
+- **Transparent token refresh** — access tokens auto-refresh on 401, refresh tokens rotate
+- **Mock + real client architecture** — swap between mock and real via `USE_MOCK_DATA` env var
+- **9 REST endpoints** — 4 account endpoints + 3 auth endpoints + /health + /docs
+- **19 automated tests** — including 5 dedicated tests for OAuth refresh-on-401 lifecycle
 - Async-first FastAPI backend with concurrent query support
-- Lifespan-managed shared Salesforce client
-- Dependency injection pattern for clean endpoint code
+- Lifespan-managed shared client (mock or real, decided at startup)
 - Pydantic v2 models with full type safety
-- 14 automated tests passing in ~5 seconds
-- Layered architecture ready for the metadata graph (Weeks 5-7), Claude integration (Weeks 8-10), and developer interfaces (Weeks 11-13)
+- Tests are hermetic — produce the same result regardless of `.env` state
 
 ## Tech stack
 
@@ -45,7 +50,8 @@ and support features may come in Phase 2.
 - Python 3.11+ with FastAPI
 - Pydantic v2 (type-safe data validation)
 - httpx (async HTTP client)
-- pytest + TestClient (integration testing)
+- python-dotenv (env var loading)
+- pytest + TestClient + httpx.MockTransport (integration + unit testing)
 
 **Coming in upcoming weeks**
 - Salesforce Metadata API + Tooling API clients (Week 5)
@@ -57,8 +63,6 @@ and support features may come in Phase 2.
 - TypeScript + VS Code Extension API (Week 13)
 
 ## Architecture (target — being built through Phase 1)
-
-
 ┌────────────────────────────────────────────────────────────────┐
 │                    USER-FACING INTERFACES                       │
 ├────────────────────────────────────────────────────────────────┤
@@ -89,8 +93,9 @@ and support features may come in Phase 2.
 ▼
 ┌────────────────────────────────────────────────────────────────┐
 │              SALESFORCE DATA LAYER                              │
-│  Metadata API + Tooling API + REST API (current)                │
-│  OAuth 2.0 Web Server Flow (Week 4)                             │
+│  Metadata API + Tooling API (Week 5)                            │
+│  REST API (✅ working — Week 4)                                 │
+│  OAuth 2.0 Web Server Flow + PKCE (✅ working — Week 4)         │
 │  SQLite local cache (Week 7)                                    │
 └─────────────────────────────────────────────────────────────────┘
 
@@ -103,17 +108,23 @@ salesforce-ai-assistant/
 │   │   ├── models/
 │   │   │   └── salesforce.py                      # Pydantic models for SF data
 │   │   ├── salesforce/                            # Salesforce data layer
-│   │   │   ├── rest_api.py                        # Real async REST client
+│   │   │   ├── auth.py                            # OAuth 2.0 + PKCE logic
+│   │   │   ├── oauth_models.py                    # OAuth response models
+│   │   │   ├── token_storage.py                   # Token persistence (gitignored file)
+│   │   │   ├── rest_api.py                        # Real OAuth-backed async REST client
 │   │   │   └── mocks/
 │   │   │       └── rest_mock.py                   # Mock client for development
 │   │   └── interfaces/                            # All consumer-facing entry points
 │   │       └── rest_api/
 │   │           └── routes/
-│   │               └── accounts.py                # /accounts/* endpoints
+│   │               ├── accounts.py                # /accounts/* endpoints
+│   │               └── auth.py                    # /auth/* endpoints
 │   ├── tests/
-│   │   └── test_endpoints.py                      # 14 pytest integration tests
+│   │   ├── test_endpoints.py                      # 14 pytest tests (mock client)
+│   │   └── test_salesforce_client.py              # 5 pytest tests (real client + refresh)
 │   ├── requirements.txt
-│   └── .env.example
+│   ├── .env.example                               # Template (.env is gitignored)
+│   └── tokens.json                                # OAuth tokens (gitignored)
 ├── README.md
 ├── ROADMAP.md                                     # Phase 1 15-week plan
 ├── NOTES.md                                       # Development journal
@@ -121,11 +132,9 @@ salesforce-ai-assistant/
 ├── LICENSE                                        # MIT
 └── .gitignore                                     # Protects secrets
 
-
 Future directories (will appear as Phase 1 progresses):
 - `backend/app/intelligence/` — metadata graph, code intel, orchestration (Weeks 5-9)
 - `backend/app/interfaces/mcp_server/` — MCP protocol server (Week 11)
-- `backend/app/interfaces/cli/` — CLI for testing (as needed)
 - `vscode-extension/` — TypeScript VS Code extension (Week 13)
 - `evals/` — evaluation test cases and runners (Week 10)
 
@@ -134,6 +143,7 @@ Future directories (will appear as Phase 1 progresses):
 ### Prerequisites
 - Python 3.11+
 - Git
+- A Salesforce Developer Edition org (free at developer.salesforce.com)
 
 ### Setup
 
@@ -143,18 +153,48 @@ cd salesforce-ai-assistant/backend
 pip install -r requirements.txt
 ```
 
+### Salesforce side — one-time setup
+
+1. In your dev org: Setup → App Manager → New External Client App
+2. Enable OAuth Settings; Callback URL: `http://localhost:8000/auth/callback`
+3. Selected Scopes: `api`, `refresh_token`, `id`
+4. Enable: Authorization Code and Credentials Flow, PKCE required, Refresh Token Rotation
+5. Save, wait 10 minutes for propagation
+6. Copy the Consumer Key + Consumer Secret
+
+### Environment
+
+Copy the template and fill in the OAuth values:
+
+```bash
+cp .env.example .env
+# Edit .env with your Consumer Key and Consumer Secret
+```
+
+The `USE_MOCK_DATA` toggle in `.env`:
+- `true` (default) — uses the in-memory mock client; no Salesforce required
+- `false` — uses the real OAuth-backed client; requires valid tokens
+
 ### Start the server
 
 ```bash
 uvicorn app.main:app --reload
 ```
 
-Server runs at `http://localhost:8000`.
+Server runs at `http://localhost:8000`. Startup log will say `MOCK` or `REAL`
+depending on `USE_MOCK_DATA`.
+
+### Authenticate (real mode only)
+
+If `USE_MOCK_DATA=false`, visit `http://localhost:8000/auth/login` in a browser
+to run through the OAuth flow. Tokens persist to `tokens.json` (gitignored)
+and survive server restarts.
 
 ### Try it
 
-- Visit `http://localhost:8000/docs` for interactive API documentation
-- Visit `http://localhost:8000/accounts/` to see mock account data
+- `http://localhost:8000/docs` — interactive API documentation
+- `http://localhost:8000/accounts/` — list accounts (mock or real org)
+- `http://localhost:8000/auth/status` — check authentication state
 - See [`TEST_URLS.md`](./TEST_URLS.md) for the full list of testable URLs
 
 ### Run tests
@@ -164,7 +204,9 @@ cd backend
 pytest tests/ -v
 ```
 
-All 14 tests should pass in ~5 seconds.
+All 19 tests should pass in ~12 seconds. Tests are hermetic — they force
+`USE_MOCK_DATA=true` via `monkeypatch.setenv`, so they don't care what's
+in your `.env`.
 
 ## Key technical decisions
 
@@ -174,25 +216,35 @@ A few choices and why:
 auto-generated OpenAPI docs, Pydantic integration is unmatched.
 
 **Layered architecture (`salesforce/`, `intelligence/`, `interfaces/`)** —
-Separates concerns by *what they do*, not by file type. The Salesforce layer
-only knows how to talk to Salesforce. The intelligence layer doesn't care
-where the data came from. The interfaces layer (REST, MCP, CLI, VS Code)
-doesn't care what the intelligence is. This is what lets Week 11 add an MCP
-server without disturbing anything else.
+Separates concerns by *what they do*, not by file type. Lets Week 11 add an
+MCP server without disturbing anything else.
 
-**Mock client + real client (same interface)** — Develop without dependency
-on Salesforce being available. The mock has the same async method signatures
-as the real client; the lifespan in `main.py` picks which to use.
+**External Client App over classic Connected App** — Salesforce is phasing
+out Connected Apps in newer org versions. External Client Apps now have full
+Web Server Flow + PKCE + RTR support. Using the forward path on a portfolio
+project signals current Salesforce knowledge.
 
-**Lifespan-managed shared client** — Create the client once at startup, share
-across all requests. Avoids re-authenticating per request.
+**OAuth Web Server Flow with PKCE** — The username-password flow is deprecated
+and was broken in our Week 2 attempt. PKCE is mandatory for External Client
+Apps as of May 2026. Web Server Flow is what real dev tools use.
 
-**Dependency injection via `Depends()`** — Endpoints declare what they need,
-FastAPI provides it. Decouples endpoints from how dependencies are constructed.
+**Mock client + real client via duck typing** — Same async interface
+(`__aenter__`, `authenticate`, `query`, `query_all`), no shared inheritance.
+Phase 1 keeps it simple; if we grow more methods/clients, a `Protocol` will
+formalize the contract.
 
-**Tests written alongside features** — 14 tests run in 5 seconds, catching
-regressions during the upcoming Salesforce auth, Claude integration, and
-metadata graph work.
+**Transparent refresh-on-401** — Access tokens expire (~2 hours);
+SalesforceClient handles refresh internally so endpoint code never sees auth
+complexity. Caller writes `await client.query(soql)` — nothing else.
+
+**Tests must be hermetic** — `monkeypatch.setenv` in test fixtures so tests
+behave identically regardless of `.env` state. Apex enforces this via `@isTest`
+semantics; Python doesn't, so we design it in deliberately.
+
+**Dependency injection for HTTP client** — `auth.py`'s functions accept an
+optional `httpx.AsyncClient` parameter. Lets tests inject `MockTransport`,
+lets production code share connection pools. The Apex parallel is
+`HttpCalloutMock` injection via `Test.setMock()`.
 
 ## Roadmap (high level)
 
@@ -200,8 +252,8 @@ Detailed week-by-week plan in [ROADMAP.md](./ROADMAP.md).
 
 - [x] Foundation: Python OOP, Pydantic, async (Weeks 1-2)
 - [x] FastAPI backend with mock data + tests (Week 3)
-- [ ] **Architecture refactor + Salesforce OAuth 2.0 (Week 4)** ← in progress
-- [ ] Metadata API extraction + graph construction (Weeks 5-7)
+- [x] **Architecture refactor + Salesforce OAuth 2.0 + real REST client (Week 4)**
+- [ ] Metadata API extraction + graph construction (Weeks 5-7) ← next
 - [ ] Claude integration with tool use (Weeks 8-9)
 - [ ] Evaluation harness with 100+ test cases (Week 10)
 - [ ] MCP server for Claude Desktop / Cursor / Claude Code (Week 11)
@@ -222,4 +274,3 @@ Building in public — follow commits to see the journey.
 
 MIT for open-source components — see [LICENSE](./LICENSE).
 Some advanced features may be released under different terms in future phases.
-

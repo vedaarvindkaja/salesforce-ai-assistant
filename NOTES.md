@@ -612,3 +612,228 @@ Day 4 was the heavy lift; Day 5 is cleanup:
 - Update TEST_URLS.md with the /auth/* endpoints
 - Verify the full Week 4 retrospective bullets
 - Decide on Week 5 starting point (Metadata API client)
+
+---
+
+## Week 4 Day 5 — Documentation polish
+
+What I did:
+- Updated README.md to reflect Week 4 complete state (OAuth working,
+  real client, 19 tests, USE_MOCK_DATA toggle, hermetic test discipline)
+- Updated TEST_URLS.md to reflect mock vs real mode behavior, added
+  /auth/* endpoint tests, refresh-on-401 manual test instructions
+- Wrote this Week 4 retrospective
+- Decided to skip CHANGELOG.md (deferred to Week 14 launch prep —
+  NOTES.md is already doing that doc's job for now)
+
+Took: ~1.5 hours.
+
+---
+
+## Week 4 Retrospective
+
+### What I built
+
+A complete authentication and data-access layer for Salesforce:
+
+**Architecture (Days 1-2):**
+- Refactored Week 3's flat structure into layered architecture
+  (salesforce/ → data layer, intelligence/ → reserved, interfaces/ →
+  consumer-facing)
+- Established the pattern that lets Week 11 add an MCP server without
+  disrupting anything else
+
+**OAuth 2.0 Web Server Flow with PKCE (Day 3):**
+- External Client App created in Salesforce (after discovering Connected
+  Apps are being phased out)
+- PKCE generator using `secrets` + `hashlib` + `base64.urlsafe_b64encode`
+- /auth/login → redirect to Salesforce
+- /auth/callback → code exchange, token persistence
+- /auth/status → diagnostic endpoint
+- Token storage as JSON file (gitignored), keyed for future SQLite migration
+
+**Real SalesforceClient with refresh-on-401 (Day 4):**
+- Replaced Week 2's broken username-password client
+- Bearer token authentication on every request
+- Transparent refresh-on-401 with single retry
+- Refresh Token Rotation persistence (new refresh_token saved each refresh)
+- Mock + Real clients swappable via USE_MOCK_DATA env var
+- 5 new tests using httpx.MockTransport for the auth lifecycle
+
+**Documentation (Days 2 and 5):**
+- README reframed around developer intelligence platform vision
+- TEST_URLS.md updated with mock/real mode distinction, auth endpoints,
+  manual refresh testing
+- NOTES.md captures every day's learnings + this retrospective
+
+### Total time invested
+
+About 13 hours across 5 working days. Roughly:
+- Day 1 (refactor): 2.5h
+- Day 2 (sweep + docs + merge): 2h
+- Day 3 (OAuth Connected App + Python flow): 5h
+- Day 4 (real client + tests): 3h
+- Day 5 (final docs polish): 1.5h
+
+Original budget was 15 hours; came in slightly under.
+
+### Biggest learning moments
+
+**Day 3 — External Client App pivot**
+
+Started planning to use a classic Connected App per Salesforce's older
+documentation. Discovered the UI no longer surfaces "New Connected App"
+in newer org versions. Researched current state, realized External
+Client Apps now fully support Web Server Flow + PKCE, and pivoted.
+
+The lesson: documentation ages. Always verify Salesforce platform
+guidance against the current org UI before committing to a path. The
+correct answer 18 months ago is sometimes the wrong answer today.
+
+**Day 3 — PKCE in code, conceptually**
+
+Worth internalizing: PKCE is a clever solution to a specific problem
+(intercepted auth codes), and the math is simpler than the name suggests:
+1. Random 32-byte verifier → kept server-side
+2. SHA-256 of verifier → base64url-encoded → sent in /authorize URL
+3. Verifier sent again in /token exchange → Salesforce verifies they match
+
+The Apex parallel is `Crypto.generateDigest('SHA-256', ...)` +
+`EncodingUtil.base64Encode()` + manual replace of `+`/`/`/`=` for the
+base64url alphabet. Python's `base64.urlsafe_b64encode` does the
+character substitution for us; only the trailing `=` padding needs to
+be stripped.
+
+**Day 4 — Tests caught a real bug**
+
+The biggest single architectural lesson of Week 4. While writing the
+refresh-on-401 tests, two of them failed with the literal Salesforce
+error "unknown_error — retry your request." Investigated: `auth.refresh_access_token()`
+was creating its own `httpx.AsyncClient` internally, so my MockTransport
+never intercepted refresh calls — they went to real Salesforce, which
+correctly rejected my fake "OLD_REFRESH_TOKEN" string.
+
+Fix: refactored both `exchange_code_for_tokens` and `refresh_access_token`
+to accept an optional `httpx.AsyncClient` parameter. Caller passes their
+own (real production or mocked test). Now tests can inject a MockTransport
+and refresh stays fully fake.
+
+This is exactly the kind of bug you only catch by writing tests.
+**Hidden dependencies are testability killers.** The Apex parallel is
+`HttpCalloutMock` — Test.setMock() injects a fake HTTP responder, and
+your production code doesn't need to know it happened. Python doesn't
+give you Apex's free injection; you have to design it in deliberately
+via function parameters.
+
+**Day 4 — Tests must be hermetic**
+
+After Day 4's code worked end-to-end against my real org (USE_MOCK_DATA=false),
+running `pytest tests/` failed 7/19 tests. They were checking for
+"Edge Communications" (mock data) but getting "Pyramid Construction"
+(real org data) because the test process inherited my `.env`.
+
+Fix: `monkeypatch.setenv("USE_MOCK_DATA", "true")` in the TestClient
+fixture. Tests now produce the same result regardless of `.env` state.
+
+The principle: **tests should produce the same result on every machine,
+in every environment.** Apex enforces this via `@isTest` semantics; Python
+doesn't, so you have to design hermeticity in deliberately.
+
+### Architectural decisions made this week
+
+These are the principal-architect-worthy decisions worth flagging for
+future reference (formalize as ADRs in docs/decisions/ during Week 14
+polish):
+
+1. **Layered architecture** (`salesforce/`, `intelligence/`, `interfaces/`)
+   over feature-flat folders. Day 1.
+
+2. **External Client App** over classic Connected App. Day 3. Reasons:
+   Salesforce phasing out Connected Apps in newer orgs; ECAs now have
+   full Web Server Flow support; PKCE/RTR mandates apply to both anyway.
+
+3. **In-memory dict for OAuth flow state** (PKCE verifier between
+   /auth/login and /auth/callback) over signed cookies. Day 3. Phase 1
+   is single-user local; Phase 2 multi-tenant will need a real session
+   store.
+
+4. **Duck typing for Mock vs Real client** over a formal Protocol/ABC.
+   Day 4. Pragmatic for 2 clients with ~5 methods; Phase 2's metadata
+   API client will likely justify a Protocol.
+
+5. **Design B (refresh on 401, retry once)** over Design A (fail loudly,
+   require caller to handle) or Design C (background refresh task). Day 4.
+   Right balance of self-healing and simplicity.
+
+6. **Dependency injection for httpx.AsyncClient** over hidden internal
+   creation. Day 4. Forced by needing testability; also a production
+   win (connection pool reuse during refresh).
+
+### What I'd do differently
+
+- **More frequent commits.** Day 3 was a single huge commit (737 lines).
+  Should have committed after oauth_models.py, then auth.py, then routes,
+  etc. Cleaner history; if something broke I could revert one piece.
+
+- **Verify the startup log line every time.** When uvicorn `--reload`
+  didn't pick up my Step 2 main.py change in Day 4, I should have caught
+  it from the startup line saying "mock for now" (old code) instead of
+  "MOCK" or "REAL" (new code). Wasted ~10 minutes assuming everything
+  was up-to-date when it wasn't.
+
+- **Treat the editor as untrustworthy during refactors.** Day 1's silent
+  file clobbering should have taught me to close VS Code tabs of files
+  I'm about to `git mv`. The shell is the source of truth during
+  structural changes; the editor is just a viewer.
+
+- **Smaller principal-architect moments earlier.** Several decisions I
+  made this week (in-memory flow dict, duck typing, etc.) deserved
+  explicit ADR-format flagging when I made them, not after.
+
+### What surprised me
+
+- **httpx.MockTransport is delightful.** I expected mocking HTTP in
+  async Python to be painful. It's not — you write a function that
+  takes an `httpx.Request` and returns an `httpx.Response`, pass it as
+  `transport=MockTransport(handler)` on the AsyncClient, done. No
+  monkey-patching individual methods, no fragile string matching.
+
+- **PKCE math takes 4 lines of Python.** The acronyms make it sound
+  intimidating. It's actually trivial: random string → sha256 → base64url
+  → strip padding.
+
+- **My old expired access_token was the perfect test case for refresh.**
+  Day 4's live test exercised refresh-on-401 naturally because the
+  token from Day 3 was 23 hours old. If I'd built this with fresh
+  tokens, I wouldn't have seen the refresh path execute until Day 5+.
+
+- **Pydantic v2 deserialization continues to be magic.** No JSON.parse,
+  no manual field assignment, no validation logic. Just call
+  `Model.model_validate_json(text)` and either get a typed object or a
+  clear error. Compared to Apex's `JSON.deserialize` + manual null checks,
+  this is a productivity multiplier.
+
+### What's next (Week 5)
+
+Per ROADMAP.md Section 4, Week 5 is **metadata extraction**:
+
+- Build `app/salesforce/metadata_api.py` — Metadata API client
+  (list_metadata, read_metadata, describe_metadata)
+- Build `app/salesforce/tooling_api.py` — Tooling API client (Apex
+  classes, Flow definitions, validation rules)
+- Pull comprehensive org metadata to local JSON files
+- Generate realistic mock org structure for testing
+- Tests for both APIs
+
+20 hours allocated in ROADMAP. Realistically might be 15-18 given Week 4
+came in under budget. The architecture from Week 4 (mock+real pattern,
+hermetic tests, dependency injection for HTTP client) carries forward
+directly — Week 5's metadata API client is structurally identical to
+Week 4's REST client, just hitting different endpoints.
+
+The Salesforce Metadata API is SOAP-based (XML, not JSON), which will
+be the main new wrinkle. Either parse XML manually, use a library, or
+use the simpler subset of the Tooling API which IS REST/JSON. Decision
+for Day 1 of Week 5.
+
+---
