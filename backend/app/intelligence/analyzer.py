@@ -1,3 +1,4 @@
+
 # ============================================================
 # PYTHON CODE
 # ============================================================
@@ -8,7 +9,7 @@ referencing a given identifier (an sObject or field name). The first
 piece of the platform that produces an *answer*, not a report.
 
 SCOPE (ADR-006): v1 is a word-boundary string scan, NOT an AST parse.
-Known limitations, by design:
+Matching is case-insensitive (ADR-007). Known limitations, by design:
   - False positives: matches inside comments and string literals.
   - False negatives: misses dynamic refs (obj.get('Field'), dynamic SOQL).
   - Triggers: the declaration line (`trigger X on Account`) is caught, but
@@ -59,12 +60,14 @@ class ReferenceReport:
 
 
 def _find_lines(body: str, identifier: str) -> list[int]:
-    """1-indexed line numbers where identifier appears on a word boundary.
+    """1-indexed line numbers where identifier appears on a word boundary,
+    case-insensitively (Apex is case-insensitive, so 'account' and 'Account'
+    reference the same thing — ADR-007).
 
     Word-boundary match so 'Account' doesn't match 'AccountTeamMember'.
     re.escape guards against regex metacharacters in the identifier.
     """
-    pattern = re.compile(rf"\b{re.escape(identifier)}\b")
+    pattern = re.compile(rf"\b{re.escape(identifier)}\b", re.IGNORECASE)
     return [
         lineno
         for lineno, line in enumerate(body.splitlines(), start=1)
@@ -136,22 +139,27 @@ class ReferenceAnalyzer:
 #
 #        public List<Reference> findReferences(
 #                String identifier, List<String> metadataTypes) {
-#            Pattern p = Pattern.compile('\\b' + Pattern.quote(identifier) + '\\b');
+#            // CASE_INSENSITIVE flag mirrors Python re.IGNORECASE (ADR-007);
+#            // Apex itself is case-insensitive, so this matches the language.
+#            Pattern p = Pattern.compile(
+#                '\\b' + Pattern.quote(identifier) + '\\b',
+#                Pattern.CASE_INSENSITIVE);
 #            List<Reference> refs = new List<Reference>();
 #            for (Metadata_Cache__c row : [
 #                SELECT Record_Id__c, Display_Name__c, Metadata_Type__c, Payload__c
 #                FROM Metadata_Cache__c
 #                WHERE Metadata_Type__c IN :metadataTypes
 #            ]) {
-#                // ... split Payload__c body on '\n', test each line ...
+#                // ... split Payload__c body on newline, test each line ...
 #            }
 #            return refs;
 #        }
 #    }
 #
 # Concept mapping:
-# - metadata_types tuple + for-loop      → SOQL WHERE Metadata_Type__c IN :list
-# - tuple default (immutable)            → no parallel; Apex has no default args
-# - Reference.metadata_type tag          → Metadata_Type__c column on the row
-# - sort(key=lambda, reverse=True)       → List.sort() w/ Comparable wrapper
+# - re.IGNORECASE                        -> Pattern.CASE_INSENSITIVE
+# - metadata_types tuple + for-loop      -> SOQL WHERE Metadata_Type__c IN :list
+# - tuple default (immutable)            -> no parallel; Apex has no default args
+# - Reference.metadata_type tag          -> Metadata_Type__c column on the row
+# - sort(key=lambda, reverse=True)       -> List.sort() w/ Comparable wrapper
 # ============================================================

@@ -1,3 +1,4 @@
+
 # No direct Apex equivalent — pytest test module (cf. Apex @isTest classes)
 """Hermetic tests for ReferenceAnalyzer. Synthetic bodies, throwaway DB."""
 import pytest
@@ -68,7 +69,6 @@ async def test_metadata_types_param_limits_scan(tmp_path):
                 records=[_FakeRec(Id="01p1", Name="AccSvc", Body="Account a;")])
     await c.put(org_key="org1", metadata_type="ApexTrigger",
                 records=[_FakeRec(Id="01q1", Name="AccTrig", Body="Account x;")])
-    # Restrict to classes only — trigger must be ignored.
     report = await ReferenceAnalyzer(c).find_references(
         org_key="org1", identifier="Account", metadata_types=("ApexClass",))
     assert report.referencing_count == 1
@@ -115,3 +115,17 @@ async def test_no_matches_returns_empty(tmp_path):
     report = await ReferenceAnalyzer(c).find_references(org_key="org1", identifier="Opportunity")
     assert report.references == []
     assert report.referencing_count == 0
+
+
+@pytest.mark.asyncio
+async def test_case_insensitive_match(tmp_path):
+    c = await _cache(tmp_path)
+    await c.put(org_key="org1", metadata_type="ApexClass", records=[
+        _FakeRec(Id="01p1", Name="Svc",
+                 Body="Account account = new Account();\naccount.Name = 'x';")])
+    upper = await ReferenceAnalyzer(c).find_references(org_key="org1", identifier="Account")
+    lower = await ReferenceAnalyzer(c).find_references(org_key="org1", identifier="account")
+    assert upper.referencing_count == 1
+    assert lower.referencing_count == 1
+    assert upper.references[0].line_numbers == [1, 2]
+    assert lower.references[0].line_numbers == [1, 2]
