@@ -20,3 +20,4 @@ pytest-asyncio>=0.24.0
 # aiosqlite>=0.20.0          # Week 7 — local cache
 # apscheduler>=3.10.0        # Week 7 — scheduled sync jobs
 
+aiosqlite
