@@ -1173,4 +1173,34 @@ and persisted JSON to work.
 Day 2 done. Foundation for Week 5 is solid: real-org-verified Tooling
 API client, 29 tests green, clean commits, documented platform quirks.
 
+
+### ADR-004 — SQLite connection strategy for MetadataCache
+
+**Decision:** Per-operation connections (`with sqlite3.connect(...)` inside
+each method) rather than a lifespan-owned persistent connection.
+
+**Alternatives considered:**
+- Lifespan-owned connection (same pattern as ADR-003's SalesforceHTTPClient)
+- Connection pool (overkill for single-user local SQLite)
+
+**Why this is the OPPOSITE call from ADR-003:**
+ADR-003 chose a persistent HTTP connection because Salesforce auth state
+(tokens, refresh lifecycle) must live somewhere across requests — you
+can't recreate it per-operation without re-authenticating.
+
+SQLite has no equivalent state problem. A file-based database carries
+its own persistence; the connection is just a door into it. Opening and
+closing that door per-operation costs microseconds and buys:
+- No connection leak risk (context manager guarantees close)
+- No threading concerns (each operation is isolated)
+- Simpler code (no lifespan wiring needed)
+
+The contrast is the lesson: persistent resources are justified when
+they own state that must survive across operations. When the resource
+is stateless (SQLite file, simple HTTP GET with no auth), per-operation
+is cleaner.
+
+**Trade-off accepted:** If Phase 2 adds concurrent writes from multiple
+users, WAL mode + connection pooling (via `aiosqlite`) becomes the right
+answer. Not a Phase 1 problem.
 ---

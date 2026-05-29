@@ -378,6 +378,7 @@ salesforce-ai-assistant/
 - ✅ Metadata API client working with real Salesforce
 - ✅ Tooling API client working
 - ✅ Local JSON extracts of full org metadata
+- ✅ Storage layer (MetadataCache) with SQLite + JSON file output
 - ✅ Mock org with realistic structure for development
 - ✅ Tests for both real and mock clients
 
