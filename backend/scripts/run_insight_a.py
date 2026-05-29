@@ -2,7 +2,6 @@
 """Run insight A against the real cached org. No org call — reads cache only.
 
     python -m scripts.run_insight_a Account
-    python -m scripts.run_insight_a Contact
 """
 from __future__ import annotations
 
@@ -24,15 +23,16 @@ async def main() -> None:
     org_key = tokens.instance_url
 
     cache = MetadataCache(Path("data") / "metadata_cache.db")
-    analyzer = ReferenceAnalyzer(cache)
-    report = await analyzer.find_references(org_key=org_key, identifier=identifier)
+    report = await ReferenceAnalyzer(cache).find_references(
+        org_key=org_key, identifier=identifier)
 
-    print(f"\n'{identifier}' referenced in {report.referencing_class_count} "
-          f"of {report.classes_scanned} classes:\n")
+    print(f"\n'{identifier}' referenced in {report.referencing_count} "
+          f"of {report.records_scanned} Apex classes + triggers:\n")
     for ref in report.references:
+        tag = "trigger" if ref.metadata_type == "ApexTrigger" else "class"
         preview = ref.line_numbers[:5]
         more = "..." if ref.match_count > 5 else ""
-        print(f"  {ref.class_name:<40} {ref.match_count:>3} refs  "
+        print(f"  [{tag:<7}] {ref.name:<38} {ref.match_count:>3} refs  "
               f"(lines {preview}{more})")
     if not report.references:
         print("  (none)")
