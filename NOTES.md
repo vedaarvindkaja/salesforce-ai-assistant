@@ -837,3 +837,107 @@ use the simpler subset of the Tooling API which IS REST/JSON. Decision
 for Day 1 of Week 5.
 
 ---
+
+## Daily log (continued — Week 5)
+
+### Week 5 Day 1 — Layered HTTP client refactor (ADR-003)
+
+What I did:
+- Wrote three ADRs into `docs/decisions/`:
+  - ADR-001 (backfill): layered architecture
+  - ADR-002 (backfill): External Client App over classic Connected App
+  - ADR-003 (today): split SalesforceClient into HTTP layer + API layer
+- Refactored Week 4's monolithic `SalesforceClient` into two classes:
+  - `SalesforceHTTPClient` (new file `app/salesforce/http_client.py`) —
+    owns httpx instance, token state, refresh-on-401, RTR persistence
+  - `RestAPIClient` (renamed from `SalesforceClient` in
+    `app/salesforce/rest_api.py`) — holds an HTTPClient, exposes
+    domain methods `query()` / `query_all()`
+- Updated `app/main.py` lifespan to construct `RestAPIClient` for real mode
+- Migrated `tests/test_salesforce_client.py` to test the HTTP layer
+  directly (refresh-on-401 is HTTP-layer behavior; testing it through the
+  REST wrapper would be testing the wrong thing)
+- Kept `SalesforceClient = RestAPIClient` alias for backwards compatibility;
+  plan to remove in Week 6 when callsites have settled
+- All 19 tests still pass; manual verification in both mock and real modes
+  confirmed end-to-end behavior unchanged
+
+Took: ~[FILL IN ACTUAL TIME] hours.
+
+### Why the refactor today rather than later
+
+The trigger was Week 5 Day 2's planned Tooling API client. Without the
+refactor, ToolingAPIClient would either duplicate the auth+refresh logic
+or reach into RestAPIClient's privates — both bad. With the refactor,
+ToolingAPIClient simply holds the same SalesforceHTTPClient instance
+and gets refresh-on-401 for free.
+
+Captured in ADR-003. The key insight: Week 4's SalesforceClient was
+secretly doing two jobs (HTTP lifecycle + REST API operations) that
+only looked like one because there was one consumer. The moment a
+second consumer appeared on the horizon (Tooling, then Metadata,
+then MCP), the seam became obvious.
+
+### The "quality over timebox" moment
+
+I originally proposed the refactor with a 90-minute hard cutoff: if it
+takes longer, fall back to composition-without-refactor. Pushed back
+on that explicitly — Phase 1 is the foundation for Phase 2+, and a
+shortcut here compounds across every future consumer of Salesforce APIs.
+
+Updated ADR-003 to reject timeboxing as a forcing function. The right
+discipline is "if it's getting messy, slow down and address it cleanly,"
+not "if the clock runs out, ship a worse design."
+
+This is the kind of self-correction I want to keep doing. Engineer
+fatigue + AI tendency to optimize for the conversational close = real
+risk of accepting shortcuts that look reasonable in the moment. The
+defense is to articulate the standard up front and refer back to it.
+
+### Key technical concepts (Python ↔ Apex)
+
+- **Composition over inheritance.** Python idiom: when class A "uses"
+  class B's functionality, hold a B instance rather than subclassing.
+  RestAPIClient holds a SalesforceHTTPClient — it doesn't extend it.
+  Apex would lean toward inheritance because dependency injection is
+  awkward without a framework; Python's first-class objects and
+  constructor flexibility make composition the default.
+
+- **Class aliasing as rename safety net.** The line
+  `SalesforceClient = RestAPIClient` at module bottom creates a second
+  name pointing to the same class. Lets old imports keep working during
+  a transition. Apex has no equivalent — class renames are atomic across
+  all callsites or they don't compile.
+
+- **Keyword-only arguments via `*`.** The `request()` signature is
+  `request(self, method, path, *, params=None, json=None)`. The bare `*`
+  forces `params` and `json` to be passed by name, never positionally.
+  Apex doesn't have this; you'd use method overloading or a request
+  struct.
+
+- **Sharp layer responsibilities.** The new HTTP client's job is to
+  return raw httpx.Response objects — it does NOT call raise_for_status.
+  The REST client decides what counts as an error and parses bodies.
+  This separation matters: a Tooling client might handle 400s differently
+  than a REST client (e.g., parse a Tooling-specific error envelope), and
+  it shouldn't have to undo the HTTP layer's opinion to do so.
+
+### Scope discovery I noticed but parked
+
+The mock client (`MockSalesforceClient`) stays monolithic — I deliberately
+did NOT split it into a mock HTTP layer + mock REST layer. Reasoning is
+in ADR-003's "Mock client asymmetry (explicit)" subsection. Briefly: the
+mock doesn't do HTTP, so a mock HTTP layer is ceremony without function.
+Duck typing means the asymmetry is invisible to consumers.
+
+If Phase 2 multi-tenant needs to test token-refresh races or per-user
+session state, that's when I'd split the mock. Not before.
+
+### What I'd do differently
+
+- **Could have written the ADRs in commit messages first**, then promoted
+  to docs/decisions/ when the structure settled. Writing all three as
+  fresh markdown files up front meant some back-and-forth as I refined
+  ADR-003 mid-session. Eith
+
+---
