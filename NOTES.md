@@ -503,4 +503,112 @@ docs/decisions/ in Week 14.
   who intercepts the redirect from completing the flow.
 
 - **Server-side flow state** — the PKCE verifier must persist between
-  /auth/login (when we generate it) a
+  /auth/login (when we generate it) 
+
+
+  ### Week 4 Day 4 — Real SalesforceClient + refresh-on-401
+
+What I built:
+- `app/salesforce/rest_api.py` — real OAuth-backed client replacing the
+  Week 2 broken username-password code
+- `app/main.py` lifespan branches on USE_MOCK_DATA env var
+- `tests/test_salesforce_client.py` — 5 tests using httpx.MockTransport
+- Fix in `tests/test_endpoints.py` — forced USE_MOCK_DATA=true via
+  monkeypatch so tests are hermetic regardless of .env state
+
+End-to-end verified: yesterday's access_token had expired (24+ hours old);
+hitting /accounts/ today triggered refresh-on-401 automatically. New
+tokens saved to disk, retry succeeded, 10 real accounts returned.
+
+Took: ~3 hours (within 2-3 hour budget).
+
+### Architecture decision: dependency injection for HTTP client
+
+Discovered a bug while writing tests: `auth.refresh_access_token()` was
+creating its own `httpx.AsyncClient` internally. This made it impossible
+to inject a MockTransport for testing — every test that triggered refresh
+was secretly hitting real Salesforce, which (correctly) rejected our
+fake `OLD_REFRESH_TOKEN` string.
+
+Two options:
+- A: Pass httpx.AsyncClient as an optional parameter (dependency injection)
+- B: Use a module-level shared client (hidden global state)
+
+Picked A. Honest about the function's dependencies, testable, reuses
+the SalesforceClient's connection pool in production. The Apex parallel
+is `HttpCalloutMock` injected via `Test.setMock()` — same idea, different
+plumbing.
+
+This is the kind of bug you only catch by writing tests. Without tests,
+it would have lurked until Week 8-9 when Claude tool use makes rapid
+refresh calls and I'd have spent hours debugging "why are my tokens
+randomly invalid."
+
+ADR-worthy. Captured in commit message; formalize in docs/decisions/
+during Week 14 polish.
+
+### Lesson — tests must be hermetic
+
+Initial test run failed 7/19 tests after Day 4 changes. Cause: my .env
+had USE_MOCK_DATA=false from the real-mode live test, and TestClient(app)
+inherited that env var. Tests were running against my real org, returning
+"Pyramid Construction" instead of "Edge Communications," failing on
+assertion mismatches.
+
+Fix: `monkeypatch.setenv("USE_MOCK_DATA", "true")` in the test fixture.
+Tests now set up their own environment regardless of .env.
+
+The principle: **tests should produce the same result on every machine,
+in every environment.** Apex enforces this via @isTest semantics (Custom
+Settings hidden, callouts blocked unless mocked). Python doesn't enforce
+it — you have to design hermeticity in deliberately.
+
+### Key technical concepts
+
+- **Duck typing for swappable clients**: Mock and Real clients share no
+  inheritance, just identical method signatures. Python's "if it quacks
+  like a duck, treat it like one." For Phase 1 with 2 clients and ~5
+  methods this is fine. Phase 2+ will probably need a Protocol or ABC
+  to formalize the contract.
+
+- **`Optional[httpx.AsyncClient] = None` pattern**: When a function might
+  manage its own resource or be given one, `Optional[T] = None` with an
+  `if param is not None` branch is the Pythonic idiom. Cleaner than
+  overloading or two separate functions.
+
+- **`monkeypatch` fixture**: pytest's built-in fixture for temporarily
+  setting env vars, swapping module attributes, etc. Auto-reverts after
+  the test. Use this; don't manually save/restore in tearDown.
+
+- **`httpx.MockTransport`**: lets you fake every HTTP call at the
+  transport layer without changing your code. The function `handler`
+  receives every `httpx.Request` and returns whatever `httpx.Response`
+  you want. Much cleaner than mocking individual `.get`/`.post` calls.
+
+- **Refresh Token Rotation in code**: every `_refresh_tokens()` call
+  saves the new refresh_token from Salesforce's response. If you forget
+  this step, the second refresh fails because Salesforce invalidated the
+  old refresh_token the moment you used it.
+
+### Race condition I'm aware of but parking
+
+If two concurrent `query()` calls both get 401, both call
+`_refresh_tokens()`. The second one might use an already-rotated
+refresh_token (now invalid), causing a refresh failure that propagates
+to the user as an error.
+
+For Phase 1 single-user this won't happen often — UI sessions don't
+fire dozens of concurrent queries. Documented in the rest_api.py
+docstring. Phase 2 multi-tenant needs an `asyncio.Lock` around refresh.
+
+Apex avoids this entirely because Named Credentials serialize refreshes
+at the platform level. Trade-off: we get control + responsibility.
+
+### What's next (Day 5)
+
+Day 4 was the heavy lift; Day 5 is cleanup:
+- Update README.md to reflect Day 4 reality (real Salesforce client
+  working, tokens.json file, USE_MOCK_DATA env var)
+- Update TEST_URLS.md with the /auth/* endpoints
+- Verify the full Week 4 retrospective bullets
+- Decide on Week 5 starting point (Metadata API client)
