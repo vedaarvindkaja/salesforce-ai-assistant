@@ -70,6 +70,22 @@ their own.
   the layered structure because it doesn't do real HTTP. Phase 2 may revisit
   this for symmetry.
 
+### Mock client asymmetry (explicit)
+
+`MockSalesforceClient` stays monolithic — it does not get split into a mock
+HTTP client + mock REST client. Reasoning:
+
+- The mock does not perform HTTP, so a "mock HTTP layer" would be ceremony
+  without function
+- Duck typing means consumers don't care about internal class structure;
+  asymmetric mock + symmetric real is fine as long as each side is
+  internally coherent
+- Day 6 of Week 5 will add `MockToolingAPIClient` as a parallel monolithic
+  mock (not as part of a mock HTTP layer)
+
+Revisit in Phase 2 if multi-tenant testing requires modeling the HTTP
+lifecycle (token refresh races, per-user session state, etc.).
+
 ## Failure mode considered
 
 The refactor is mechanical but not trivial — it touches the HTTP client,
