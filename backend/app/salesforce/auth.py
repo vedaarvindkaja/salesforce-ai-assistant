@@ -131,6 +131,7 @@ def build_authorize_url(code_challenge: str, state: Optional[str] = None) -> str
 async def exchange_code_for_tokens(
     authorization_code: str,
     code_verifier: str,
+    http: Optional[httpx.AsyncClient] = None,
 ) -> OAuthTokenResponse:
     """Exchange an authorization code for access + refresh tokens.
     
@@ -141,6 +142,9 @@ async def exchange_code_for_tokens(
         authorization_code: The 'code' query parameter from the callback URL.
         code_verifier: The PKCE verifier we generated in generate_pkce_pair.
                        Must match the challenge we sent in build_authorize_url.
+        http: Optional httpx.AsyncClient to use. If omitted, a short-lived
+              client is created for this single call. Pass your own client
+              to reuse connections or to inject a MockTransport in tests.
     
     Returns:
         OAuthTokenResponse with access_token, refresh_token, instance_url, etc.
@@ -160,8 +164,11 @@ async def exchange_code_for_tokens(
         "code_verifier": code_verifier,
     }
     
-    async with httpx.AsyncClient(timeout=30.0) as http:
+    if http is not None:
         response = await http.post(token_url, data=data)
+    else:
+        async with httpx.AsyncClient(timeout=30.0) as throwaway:
+            response = await throwaway.post(token_url, data=data)
     
     return _parse_token_response(response)
 
@@ -170,7 +177,10 @@ async def exchange_code_for_tokens(
 # Refresh: get a new access token using the refresh token
 # ============================================================
 
-async def refresh_access_token(refresh_token: str) -> OAuthTokenResponse:
+async def refresh_access_token(
+    refresh_token: str,
+    http: Optional[httpx.AsyncClient] = None,
+) -> OAuthTokenResponse:
     """Get a new access token using a stored refresh token.
     
     Salesforce access tokens are short-lived (~2 hours). Refresh tokens are
@@ -183,6 +193,9 @@ async def refresh_access_token(refresh_token: str) -> OAuthTokenResponse:
     
     Args:
         refresh_token: The stored refresh token.
+        http: Optional httpx.AsyncClient to reuse. If omitted, a short-lived
+              client is created for this single call. Pass your own client
+              to reuse connections or to inject a MockTransport in tests.
     
     Returns:
         OAuthTokenResponse with a fresh access_token and (likely) a new refresh_token.
@@ -197,8 +210,11 @@ async def refresh_access_token(refresh_token: str) -> OAuthTokenResponse:
         "client_secret": CLIENT_SECRET,
     }
     
-    async with httpx.AsyncClient(timeout=30.0) as http:
+    if http is not None:
         response = await http.post(token_url, data=data)
+    else:
+        async with httpx.AsyncClient(timeout=30.0) as throwaway:
+            response = await throwaway.post(token_url, data=data)
     
     return _parse_token_response(response)
 
@@ -286,6 +302,8 @@ def _parse_token_response(response: httpx.Response) -> OAuthTokenResponse:
 # - os.environ.get()                 → Custom Settings or Custom Metadata Types
 # - async/await                      → Apex callouts are synchronous in @RestResource;
 #                                       use @future or Queueable for async
+# - Optional http parameter          → Apex's HttpCalloutMock interface — injected
+#                                       in test context via Test.setMock()
 #
 # Philosophical note:
 # Python gives you the low-level OAuth primitives and you assemble them.

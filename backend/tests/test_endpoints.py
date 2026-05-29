@@ -15,13 +15,18 @@ from app.main import app
 # ============================================================
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
     """Create a TestClient that properly runs FastAPI's lifespan.
+    
+    Forces USE_MOCK_DATA=true so the test suite is deterministic regardless
+    of what's in .env. Tests assert against the mock client's fixed responses
+    (Edge Communications, Burlington Textiles, GenePoint).
     
     Using `with TestClient(app)` ensures the lifespan startup runs
     (which initializes the shared Salesforce client) and shutdown
     runs (which cleans it up).
     """
+    monkeypatch.setenv("USE_MOCK_DATA", "true")
     with TestClient(app) as test_client:
         yield test_client
 
