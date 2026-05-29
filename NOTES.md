@@ -1263,4 +1263,78 @@ demo narrates them as deliberate scope.
   MetadataTriggerHandler, TriggerActionFlow*, *Domain, *Selector).
 - `Contact` referenced in 0 of 42 classes — genuine, not a scanner miss.
   Org's Apex doesn't touch Contact directly.
+
+  ## ADR-007 — Case-insensitive matching for reference analysis
+
+**Decision:** The reference analyzer matches identifiers case-insensitively
+(`re.IGNORECASE`).
+
+**Alternatives considered:** Case-sensitive matching (fewer false positives —
+ignores `account` the variable when you mean `Account` the object).
+
+**Trade-offs:** Case-insensitive over-reports slightly (a local variable named
+`account` matches a search for the `Account` object). But ADR-006 already
+accepts false positives (comments, string literals) as the v1 stance, so
+adding case-sensitivity to fight false positives would be internally
+inconsistent. False negatives are far more dangerous than false positives in
+impact analysis: telling a developer "nothing references this field" when
+something does means they ship a breaking change.
+
+**Why:** Apex is a case-insensitive language — `Account`, `account`, `ACCOUNT`
+all refer to the same thing to the compiler. An analyzer claiming to find
+"references to Account" should match what Apex itself considers a reference.
+Case-insensitive matching is therefore *correct*, not just convenient.
+
+**Real-org evidence (this is the interview story):** Found by accident —
+searching lowercase `account` returned 1 class; capital `Account` returned 9.
+Same org, same cache, different answers. Traced to case-sensitivity. After the
+fix, some classes revealed 2–3x more references than the case-sensitive scan
+had reported (MetadataTriggerHandlerTest: 7 → 22; TriggerBaseTest: 9 → 22;
+TriggerActionFlowAddErrorTest: 4 → 12). The case-sensitive scan had been
+silently hiding 60%+ of references in some classes.
+
+---
+
+## Week 5 Day 5 retrospective
+
+### What shipped
+- Extended the reference analyzer to scan Apex triggers alongside classes
+  (multi-type scan via a `metadata_types` tuple parameter, default
+  `("ApexClass", "ApexTrigger")`).
+- `extract_to_cache.py` now pulls both classes and triggers.
+- Fixed case-sensitivity bug (ADR-007).
+- 44 tests passing (was 40; replaced 5 single-type analyzer tests with 9
+  multi-type + case-insensitive tests).
+- Added `scripts/list_cached.py` — a cache inspector. Kept as a dev tool;
+  useful for Week 6 when the graph builder reads from the cache.
+
+### Judgment call: what is and isn't ADR-worthy
+Extending the analyzer to a second body-bearing type (triggers) is NOT
+ADR-worthy — a routine extension with no real alternatives or trade-offs to
+weigh. The case-sensitivity fix (ADR-007) IS ADR-worthy — a real decision with
+a genuine trade-off and a non-obvious "correct" answer. Knowing which is which
+keeps the ADR log sharp; padding it with trivial entries would signal an
+inability to tell signal from noise.
+
+### Python learning notes
+- **Mutable default argument trap.** `metadata_types: tuple[str, ...] =
+  ("ApexClass", "ApexTrigger")` uses a TUPLE, not a list, as the default. A
+  list default is one shared object across all calls — mutate it once and every
+  future call sees the change. Tuples are immutable, so they're safe in a
+  signature. Rule: never put a list/dict/set as a default argument; use a tuple
+  or `None` + build inside. Same family as `field(default_factory=list)` in the
+  dataclasses.
+
+### Real-org finding
+- Dev org has exactly 1 trigger across 42 classes. This is the signature of a
+  trigger-actions / metadata-driven framework org (class names:
+  MetadataTriggerHandler, TriggerActionFlow*, *Domain, *Selector). In this
+  architecture logic lives in handler classes, not triggers — which makes the
+  tool's class-scanning the higher-value path. The single trigger is not on
+  Account/Opportunity (both real-org searches showed only [class] hits).
+
+### Week 6 first tasks
+- Add .gitattributes at repo root to normalize line endings (LF in repo,
+  platform default in working copy). Stops the "LF will be replaced by CRLF"
+  warnings. Quick setup at start of Week 6.
 ---

@@ -368,23 +368,25 @@ extract → cache → analyze → answer.)
 - String-scan before AST parse (ADR-006); AST parser deferred to Week 7
 - 5 hermetic tests; verified against real org (42 classes)
 
-**Day 5 (4 hours)** — Deepen the slice
-- Extend reference analysis to Apex triggers (where field-rename impact
-  matters most) OR expose insight A via a FastAPI route — decide at start of day
+**Day 5 (4 hours)** — Deepen the slice ✅
+- Extended reference analyzer to Apex triggers (multi-type scan)
+- Fixed case-sensitivity bug — Apex is case-insensitive (ADR-007)
+- Added scripts/list_cached.py cache inspector
 - ValidationRule expansion: OUT of Week 5 scope (breadth, not depth) — parked
-- Commit, push, plan Week 6
+- 44 tests passing; verified against real org (42 classes + 1 trigger)
 
 **Deliverables:**
 - ✅ Tooling API client working with real Salesforce
 - ✅ SQLite flat extraction cache (MetadataCache) — SQLite only, no JSON output
 - ✅ Reference analyzer producing ranked impact-analysis answers (insight A)
 - ✅ Real-org extraction verified (42 Apex classes cached + scanned)
-- ✅ 40 tests passing (hermetic)
+- ✅ 44 tests passing (hermetic)
 - ⬜ Metadata API (SOAP) client — NOT built; Tooling API covered Phase 1 needs
 - ⬜ Mock org generation — NOT built; hermetic synthetic fixtures used instead
 
 **ADRs this week:** ADR-004 (connection lifecycle), ADR-005 (cache partition
-key), ADR-006 (string-scan before AST). Full reasoning in NOTES.md.
+key), ADR-006 (string-scan before AST), ADR-007 (case-insensitive matching).
+Full reasoning in NOTES.md.
 
 #### Week 6 — Graph construction (20 hours)
 
