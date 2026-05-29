@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.interfaces.rest_api.routes import accounts, auth
 from app.salesforce.mocks.rest_mock import MockSalesforceClient
-from app.salesforce.rest_api import SalesforceClient
+from app.salesforce.rest_api import RestAPIClient
 
 # Load .env at startup so USE_MOCK_DATA etc. are available
 load_dotenv()
@@ -32,7 +32,10 @@ async def lifespan(app: FastAPI):
         client = MockSalesforceClient()
     else:
         print("Starting REAL Salesforce client (USE_MOCK_DATA=false)...")
-        client = SalesforceClient()
+        # RestAPIClient internally constructs its SalesforceHTTPClient.
+        # When ToolingAPIClient lands in Week 5 Day 2+, we'll construct one
+        # shared SalesforceHTTPClient here and pass it to both API clients.
+        client = RestAPIClient()
 
     await client.__aenter__()
     await client.authenticate()
