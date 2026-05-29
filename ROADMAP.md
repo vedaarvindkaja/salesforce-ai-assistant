@@ -344,45 +344,47 @@ salesforce-ai-assistant/
 
 ### Phase 1A — Metadata graph (the moat)
 
-#### Week 5 — Metadata extraction (20 hours)
+#### Week 5 — Metadata extraction + first intelligence query (20 hours)
 
-**Goal:** Pull comprehensive metadata from Salesforce into local storage.
+**Goal:** Extract Apex from a real org into a local cache, then ship the
+first query that produces an *insight* — not just stored data. (Plan
+pivoted from broad metadata extraction to a working vertical slice:
+extract → cache → analyze → answer.)
 
-**Day 1-2 (6 hours)** — Metadata API client
-- Implement `salesforce/metadata_api.py`
-- Methods: `list_metadata()`, `read_metadata()`, `describe_metadata()`
-- Handle pagination, batch reads
-- Use simple-salesforce or raw SOAP/REST
+**Day 1-2 (6 hours)** — Tooling API client ✅
+- `salesforce/tooling_api.py` with 6 typed query methods
+- Layered HTTP client refactor (ADR-003)
+- Real-org verified, 29 tests passing
 
-**Day 3-4 (6 hours)** — Object/field extraction
-- Pull all standard objects + custom objects
-- For each: fields, relationships, validation rules, record types
-- Store as structured JSON files initially (graph in Week 6)
-- Handle field-level security data
+**Day 3 (4 hours)** — Storage layer ✅
+- `intelligence/graph/storage.py` — SQLite flat extraction cache (Option A)
+- Keyed on (org_key, metadata_type, record_id); upsert semantics
+- Per-operation connection lifecycle (ADR-004)
+- 6 hermetic tests
 
-**Day 5 (4 hours)** — Tooling API integration
-- Implement `salesforce/tooling_api.py`
-- Pull Apex classes, triggers, test classes
-- Pull Flow definitions (XML)
-- Pull validation rules with their formulas
+**Day 4 (6 hours)** — First intelligence query ✅
+- `scripts/extract_to_cache.py` — real Apex → cache; org_key = instance_url (ADR-005)
+- `intelligence/analyzer.py` — reference analyzer (insight A: "what references X?")
+- String-scan before AST parse (ADR-006); AST parser deferred to Week 7
+- 5 hermetic tests; verified against real org (42 classes)
 
-**Day 6 (3 hours)** — Mock data generation
-- Build comprehensive mock that mimics real org structure
-- 10-15 objects with realistic relationships
-- 5-10 Apex classes referencing those objects
-- 3-5 Flows
-
-**Day 7 (1 hour)** — Commit, push, plan Week 6
+**Day 5 (4 hours)** — Deepen the slice
+- Extend reference analysis to Apex triggers (where field-rename impact
+  matters most) OR expose insight A via a FastAPI route — decide at start of day
+- ValidationRule expansion: OUT of Week 5 scope (breadth, not depth) — parked
+- Commit, push, plan Week 6
 
 **Deliverables:**
-- ✅ Metadata API client working with real Salesforce
-- ✅ Tooling API client working
-- ✅ Local JSON extracts of full org metadata
-- ✅ Storage layer (MetadataCache) with SQLite + JSON file output
-- ✅ Mock org with realistic structure for development
-- ✅ Tests for both real and mock clients
+- ✅ Tooling API client working with real Salesforce
+- ✅ SQLite flat extraction cache (MetadataCache) — SQLite only, no JSON output
+- ✅ Reference analyzer producing ranked impact-analysis answers (insight A)
+- ✅ Real-org extraction verified (42 Apex classes cached + scanned)
+- ✅ 40 tests passing (hermetic)
+- ⬜ Metadata API (SOAP) client — NOT built; Tooling API covered Phase 1 needs
+- ⬜ Mock org generation — NOT built; hermetic synthetic fixtures used instead
 
----
+**ADRs this week:** ADR-004 (connection lifecycle), ADR-005 (cache partition
+key), ADR-006 (string-scan before AST). Full reasoning in NOTES.md.
 
 #### Week 6 — Graph construction (20 hours)
 

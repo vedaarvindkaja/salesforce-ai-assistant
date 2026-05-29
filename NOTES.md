@@ -1203,4 +1203,64 @@ is cleaner.
 **Trade-off accepted:** If Phase 2 adds concurrent writes from multiple
 users, WAL mode + connection pooling (via `aiosqlite`) becomes the right
 answer. Not a Phase 1 problem.
+
+## ADR-005 — Cache partition key = org instance_url, read via load_tokens()
+
+**Decision:** Key the cache on `instance_url`, obtained by calling
+`load_tokens()` in the extraction script — the same loader the HTTP client
+uses.
+
+**Alternatives considered:** (a) hardcode `"default"` — silent cross-org
+collision risk; (b) `getattr` fallback chain on the client — untraceable,
+and doesn't work (instance_url isn't a public client attr); (c) reach into
+`http._tokens.instance_url` — couples to client internals; (d) explicit
+`--org-key` CLI arg — correct but redundant when load_tokens() has it.
+
+**Trade-offs:** Reading tokens a second time is a negligible duplicate file
+read for a once-per-extraction script. In exchange: no private-attr
+coupling, no manual arg, key is provably the real org.
+
+**Why:** A partition key must be known and explicit, never best-effort.
+Best-effort is fine for a display label (can be null, who cares) and wrong
+for a key (a wrong key corrupts silently across orgs).
+
+---
+
+## ADR-006 — String-scan before AST parse (reference analyzer v1)
+
+**Decision:** v1 reference analysis is word-boundary regex over cached Apex
+source, not AST parsing.
+
+**Alternatives considered:** (a) AST parse via Apex grammar (ANTLR) now;
+(b) Salesforce's `MetadataComponentDependency` API.
+
+**Trade-offs:** Regex ships today, gives the useful 80%, but has known
+false positives (comments, string literals) and false negatives (dynamic
+refs, `obj.get('Field')`, dynamic SOQL). AST is exact but a multi-day
+grammar integration (Week 7's job). The dependency API is exact and free
+but covers only certain component types — evaluate Week 6.
+
+**Why:** Day 4's goal was a working answer, not a perfect one. A
+documented-limitation scanner that runs beats a perfect parser that's
+half-built at Week 15. Limitations are named in output + docstring, so the
+demo narrates them as deliberate scope.
+
+---
+
+## Week 6 parked items
+
+- Rank production classes above test classes in reference results. Real-org
+  finding: searching `Account` ranked 5 `*Test` classes above the actual
+  production `MetadataTriggerHandler`. Raw match-count over-weights test
+  fixtures. Product improvement, not scope creep.
+- Evaluate `MetadataComponentDependency` API as a possible exact-data
+  shortcut that might cheapen/replace the Week 7 AST parser.
+
+## Real-org observations (Week 5 Day 4)
+
+- Dev org: 42 Apex classes, all with non-empty Body.
+- Trigger-framework-heavy (trigger-actions / FFLib-style class names:
+  MetadataTriggerHandler, TriggerActionFlow*, *Domain, *Selector).
+- `Contact` referenced in 0 of 42 classes — genuine, not a scanner miss.
+  Org's Apex doesn't touch Contact directly.
 ---
