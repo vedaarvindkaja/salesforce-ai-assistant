@@ -1,4 +1,4 @@
-"""Hermetic tests for QueryEngine (Week 6, Day 5 pulled forward)."""
+"""Hermetic tests for QueryEngine (Week 6, Day 5 pulled forward; Week 7 Day 1 additions)."""
 import pytest
 
 from app.intelligence.graph.models import (
@@ -9,13 +9,24 @@ from app.intelligence.graph.query import QueryEngine
 ORG = "https://test.my.salesforce.com"
 
 
-def _node(id, name, ntype=NodeType.APEX_CLASS):
-    return Node(id=id, name=name, node_type=ntype, org_key=ORG)
+def _node(id, name, ntype=NodeType.APEX_CLASS, *, is_test: bool = False):
+    """Build a Node with optional is_test attribute.
+
+    is_test=False by default — all existing tests that call _node("A", "Alpha")
+    continue to work unchanged. Pass is_test=True to simulate a test class.
+    """
+    return Node(
+        id=id, name=name, node_type=ntype, org_key=ORG,
+        attributes={"is_test": is_test},
+    )
 
 
 def _edge(src, tgt, lines):
     return Edge(source_id=src, target_id=tgt, edge_type=EdgeType.REFERENCES,
                 attributes={"line_numbers": lines, "match_count": len(lines)})
+
+# Alias so existing test code using _ref_edge still works
+_ref_edge = _edge
 
 
 def _graph():
@@ -129,3 +140,51 @@ def test_orphan_and_never_referenced_are_disjoint():
     orphans = {n.id for n in q.find_orphaned()}
     never = {n.id for n in q.find_never_referenced()}
     assert orphans.isdisjoint(never)
+
+
+# ---- find_never_referenced with exclude_tests (Week 7 Day 1) ----
+
+def _graph_with_test_nodes():
+    """Graph where some never-referenced nodes are test classes.
+
+    PricingFlowAction  --> BaseService   (production, never referenced)
+    AccountServiceTest --> BaseService   (test class, never referenced)
+    BaseService is referenced by both — so it is NOT never-referenced.
+    """
+    g = MetadataGraph()
+    g.add_node(_node("A", "PricingFlowAction", is_test=False))
+    g.add_node(_node("B", "AccountServiceTest", is_test=True))
+    g.add_node(_node("C", "BaseService", is_test=False))
+    g.add_edge(_edge("A", "C", [1]))
+    g.add_edge(_edge("B", "C", [2]))
+    return g
+
+
+def test_never_referenced_includes_tests_by_default():
+    q = QueryEngine(_graph_with_test_nodes())
+    names = _names(q.find_never_referenced())
+    assert "PricingFlowAction" in names
+    assert "AccountServiceTest" in names
+
+
+def test_never_referenced_exclude_tests_filters_test_nodes():
+    q = QueryEngine(_graph_with_test_nodes())
+    names = _names(q.find_never_referenced(exclude_tests=True))
+    assert "PricingFlowAction" in names
+    assert "AccountServiceTest" not in names
+
+
+def test_never_referenced_exclude_tests_empty_when_all_tests():
+    g = MetadataGraph()
+    g.add_node(_node("A", "OnlyTestClass", is_test=True))
+    g.add_node(_node("B", "Target", is_test=False))
+    g.add_edge(_edge("A", "B", [1]))
+    q = QueryEngine(g)
+    assert q.find_never_referenced(exclude_tests=True) == []
+
+
+def test_never_referenced_exclude_tests_false_is_same_as_default():
+    # Explicit False should behave identically to the default (include all).
+    q = QueryEngine(_graph_with_test_nodes())
+    assert (q.find_never_referenced(exclude_tests=False) ==
+            q.find_never_referenced())

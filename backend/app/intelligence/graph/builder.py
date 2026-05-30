@@ -1,7 +1,11 @@
+# ============================================================
+# PYTHON CODE
+# ============================================================
 """Graph builder — turns the flat metadata cache into a MetadataGraph.
 
 Two passes over the org's cached metadata:
   1. NODES:  one Node per cached record (ApexClass, ApexTrigger).
+             Each node gets an 'is_test' attribute set by the classifier.
   2. EDGES:  for each node, run the reference analyzer with the node's NAME
              as the identifier. Every record the analyzer returns references
              that node, so it becomes the SOURCE of a REFERENCES edge whose
@@ -21,6 +25,7 @@ tokenizer. See NOTES.md.
 from __future__ import annotations
 
 from app.intelligence.analyzer import ReferenceAnalyzer
+from app.intelligence.graph.classifier import is_test_class
 from app.intelligence.graph.models import (
     Edge,
     EdgeType,
@@ -87,6 +92,9 @@ class GraphBuilder:
                         name=rec.get("Name") or rec.get("DeveloperName") or _UNKNOWN_NAME,
                         node_type=node_type,
                         org_key=org_key,
+                        # Classifier runs once at build time; result stored on
+                        # the node so queries never need to re-read bodies.
+                        attributes={"is_test": is_test_class(rec)},
                     )
                 )
 
@@ -132,41 +140,42 @@ class GraphBuilder:
 #        public Map<Id, Set<Id>> build(List<String> nodeTypes) {
 #            // 1. NODES: load every cached record of the wanted types.
 #            List<Metadata_Cache__c> rows = [
-#                SELECT Record_Id__c, Display_Name__c, Metadata_Type__c, Payload__c
+#                SELECT Record_Id__c, Display_Name__c, Metadata_Type__c, Body__c
 #                FROM Metadata_Cache__c
 #                WHERE Metadata_Type__c IN :nodeTypes
 #            ];
 #            Map<Id, Metadata_Cache__c> nodesById = new Map<Id, Metadata_Cache__c>();
-#            for (Metadata_Cache__c r : rows) nodesById.put(r.Record_Id__c, r);
+#            for (Metadata_Cache__c r : rows) {
+#                // Classify at build time — store on the record, not recomputed later
+#                r.Is_Test__c = ApexClassifier.isTestClass(r.Display_Name__c, r.Body__c);
+#                nodesById.put(r.Record_Id__c, r);
+#            }
 #
 #            // 2. EDGES: for each target node, scan every body for its name.
-#            Map<Id, Set<Id>> edges = new Map<Id, Set<Id>>();
-#            for (Metadata_Cache__c target : rows) {
-#                if (String.isBlank(target.Display_Name__c)) continue;  // sentinel skip
-#                Pattern p = Pattern.compile(
-#                    '\\b' + Pattern.quote(target.Display_Name__c) + '\\b',
-#                    Pattern.CASE_INSENSITIVE);                          // ADR-007
-#                for (Metadata_Cache__c source : rows) {
+#            Map<Id, Set<Id>> adj = new Map<Id, Set<Id>>();
+#            for (Metadata_Cache__c target : nodesById.values()) {
+#                for (Metadata_Cache__c source : nodesById.values()) {
 #                    if (source.Record_Id__c == target.Record_Id__c) continue; // self-edge
-#                    if (p.matcher(source.Payload__c).find()) {
-#                        if (!edges.containsKey(source.Record_Id__c))
-#                            edges.put(source.Record_Id__c, new Set<Id>());
-#                        edges.get(source.Record_Id__c).add(target.Record_Id__c);
+#                    if (bodyReferences(source.Body__c, target.Display_Name__c)) {
+#                        if (!adj.containsKey(source.Record_Id__c))
+#                            adj.put(source.Record_Id__c, new Set<Id>());
+#                        adj.get(source.Record_Id__c).add(target.Record_Id__c);
 #                    }
 #                }
 #            }
-#            return edges;
+#            return adj;
+#        }
+#
+#        private static Boolean bodyReferences(String body, String name) {
+#            // Simplified — real impl uses Pattern for word-boundary matching
+#            return body != null && body.containsIgnoreCase(name);
 #        }
 #    }
 #
 # Concept mapping:
-# - cache.get(metadata_type=...)         -> SOQL WHERE Metadata_Type__c IN :list
-# - ReferenceAnalyzer reuse              -> inlined Pattern.matcher().find() loop
-# - if ref.record_id == node.id: continue-> if source.Id == target.Id: continue
-# - graph.get_node(id) is None guard     -> nodesById.containsKey(id) check
-# - MetadataGraph (DiGraph)              -> Map<Id, Set<Id>> adjacency
-# - async/await over aiosqlite           -> synchronous SOQL (no async in Apex)
-#
-# Note the O(N^2) double loop is identical in both — the Apex version makes the
-# scaling cost visually obvious. ADR-009 accepts it at current scale.
+# - GraphBuilder.__init__(cache, analyzer=None)  → constructor DI via method params
+# - analyzer or ReferenceAnalyzer(cache)         → analyzer != null ? analyzer : new ReferenceAnalyzer(cache)
+# - attributes={"is_test": is_test_class(rec)}  → r.Is_Test__c = ApexClassifier.isTestClass(...)
+# - async/await throughout                       → @future or Queueable (no true async in Apex)
+# - DEFAULT_NODE_TYPES tuple constant            → static final Set<String> DEFAULT_NODE_TYPES
 # ============================================================

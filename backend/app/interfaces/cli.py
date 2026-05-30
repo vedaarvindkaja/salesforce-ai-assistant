@@ -13,6 +13,7 @@ Examples (from backend/):
     python -m app.interfaces.cli find Trigger
     python -m app.interfaces.cli orphans
     python -m app.interfaces.cli never-referenced
+    python -m app.interfaces.cli never-referenced --no-tests
     python -m app.interfaces.cli stats
 
 Design: each _cmd_* handler is a PURE function returning its output string;
@@ -138,17 +139,23 @@ def _cmd_orphans(engine: QueryEngine) -> str:
     return "\n".join([head, *(f"  {_fmt_node(n)}" for n in nodes)])
 
 
-def _cmd_never_referenced(engine: QueryEngine) -> str:
-    nodes = engine.find_never_referenced()
+def _cmd_never_referenced(engine: QueryEngine, *, no_tests: bool = False) -> str:
+    nodes = engine.find_never_referenced(exclude_tests=no_tests)
     if not nodes:
-        return "No never-referenced metadata."
+        msg = "No never-referenced metadata"
+        return msg + " (excluding test classes)." if no_tests else msg + "."
+    # Annotate each node so the user can see which are test classes at a glance.
+    def _fmt(n: Node) -> str:
+        suffix = "  [test]" if n.attributes.get("is_test") else ""
+        return f"  {_fmt_node(n)}{suffix}"
+
+    filter_note = " (test classes excluded)" if no_tests else ""
     head = (
-        f"{len(nodes)} never-referenced — nothing in Apex references them, but "
-        f"they reference others. Expect mostly test classes (run by @isTest, "
-        f"not by reference); non-test entries are the interesting ones "
-        f"(metadata-wired actions, flow/invocable entry points, or dead code):"
+        f"{len(nodes)} never-referenced{filter_note} — nothing in Apex references "
+        f"them, but they reference others. Non-test entries are the interesting "
+        f"signal (metadata-wired actions, flow/invocable entry points, or dead code):"
     )
-    return "\n".join([head, *(f"  {_fmt_node(n)}" for n in nodes)])
+    return "\n".join([head, *(_fmt(n) for n in nodes)])
 
 
 def _cmd_stats(graph: MetadataGraph) -> str:
@@ -189,7 +196,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("name")
 
     sub.add_parser("orphans", help="nodes with no references in or out")
-    sub.add_parser("never-referenced", help="nodes nothing references (in==0, out>0)")
+
+    p = sub.add_parser("never-referenced",
+                        help="nodes nothing references (in==0, out>0)")
+    p.add_argument("--no-tests", action="store_true",
+                   help="exclude @isTest classes — surfaces production-code signal only")
+
     sub.add_parser("stats", help="node/edge counts")
     return parser
 
@@ -206,7 +218,7 @@ def _dispatch(args, engine: QueryEngine, graph: MetadataGraph) -> str:
     if args.command == "orphans":
         return _cmd_orphans(engine)
     if args.command == "never-referenced":
-        return _cmd_never_referenced(engine)
+        return _cmd_never_referenced(engine, no_tests=args.no_tests)
     if args.command == "stats":
         return _cmd_stats(graph)
     return f"Unknown command: {args.command}"  # unreachable (argparse guards)
