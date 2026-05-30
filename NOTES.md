@@ -1749,4 +1749,55 @@ Object/Field nodes + CALLS edges wired into the graph builder. Derive approach
 confirmed. Builder already type-agnostic (ADR-008/009) — extend
 `_METADATA_TYPE_TO_NODE_TYPE` map and add a second edge-building pass using
 the parser output.
+
+## Week 7 Day 3 — Object nodes + CALLS/USES_OBJECT edges; MultiDiGraph migration
+
+### What shipped
+- `models.py`: NodeType.OBJECT now live; EdgeType gains CALLS (Apex→Apex
+  method calls) and USES_OBJECT (Apex→Object via SOQL/DML). Underlying graph
+  migrated DiGraph → MultiDiGraph (ADR-011).
+- `builder.py`: third build pass (`_add_parser_edges`) runs the Apex parser
+  over each body. Derives Object nodes (id=`obj:<name>`, source="derived",
+  ADR-010), adds CALLS edges to known class nodes, USES_OBJECT edges to derived
+  Object nodes. Noise filter (`_is_valid_object_name`) drops short tokens and
+  known SOQL noise (the, elements, etc.).
+- `query.py`: find_path made MultiDiGraph-safe (picks first edge key per hop);
+  `_nodes_for`, successors/predecessors dedupe neighbors reached by parallel edges.
+- 156 unit tests passing (148 → 156). Zero regressions on the MultiDiGraph switch.
+
+### The bug that forced ADR-011 (the interview story)
+Wrote the CALLS-edge tests, they passed. But a Week 6 REFERENCES test —
+`test_edge_attributes_carry_lines_and_count` — started failing: it found ZERO
+REFERENCES edges where it expected one. Root cause: networkx DiGraph allows
+only ONE edge per ordered node pair. When Caller both REFERENCES Helper (pass 2)
+and CALLS Helper (pass 3), the second add_edge silently OVERWROTE the first.
+We were losing edges with no error.
+
+The test caught real data loss. If I'd only run the new tests, the regression
+would have shipped. Switched to MultiDiGraph (parallel edges allowed). Verified
+on real org: REFERENCES count held at exactly 87 (would have dropped under
+DiGraph as CALLS overwrote same-pair REFERENCES edges).
+
+### Real-org graph (298ms)
+- 50 nodes: 42 ApexClass + 1 ApexTrigger + 7 derived Object
+- 166 edges: 87 REFERENCES + 71 CALLS + 8 USES_OBJECT
+- 0 orphans (Object nodes connected everything that was previously isolated)
+- 7 Object nodes: the clean sObjects from the parser (Opportunity,
+  Trigger_Action__mdt, OpportunityLineItem, ProcessInstance, etc.)
+
+### Python learning
+- **DiGraph vs MultiDiGraph edge semantics.** DiGraph: one edge per (u,v) pair;
+  re-adding overwrites. MultiDiGraph: parallel edges, each with an integer key.
+  `get_edge_data(u, v)` returns `{key: data}` on a MultiDiGraph vs a flat data
+  dict on DiGraph — that's why find_path needed `get_edge_data(a,b)[first_key]`
+  not `edges[a, b]`. The migration's hidden cost is every consumer of raw edge
+  access, not the type swap itself.
+- **MultiDiGraph successors can repeat.** `g.successors(n)` yields a neighbor
+  once per parallel edge. Deduping with a `seen` set is required wherever we
+  return "distinct neighbors" — otherwise a class called twice shows up twice.
+
+### What's next — Day 4
+field-impact demo: `depends-on Opportunity` should now trace the Apex classes
+that query/DML it (via USES_OBJECT edges). Wire Object-node lookup into the CLI
+name resolver so `obj:opportunity` resolves from a typed "Opportunity".
 ---
