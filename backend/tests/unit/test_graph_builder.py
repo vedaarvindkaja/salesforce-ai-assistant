@@ -161,3 +161,25 @@ async def test_injected_analyzer_is_used(tmp_path):
     ])
     g = await GraphBuilder(c, analyzer=ReferenceAnalyzer(c)).build(org_key=ORG)
     assert g.stats().edge_count == 1
+
+
+@pytest.mark.asyncio
+async def test_test_class_node_has_is_test_true(tmp_path):
+    c = await _cache(tmp_path)
+    await c.put(org_key=ORG, metadata_type="ApexClass", records=[
+        _Rec(Id="01p1", Name="AccountServiceTest", Body="@isTest\npublic class AccountServiceTest {}"),
+    ])
+    g = await GraphBuilder(c).build(org_key=ORG)
+    node = g.get_node("01p1")
+    assert node.attributes["is_test"] is True
+
+
+@pytest.mark.asyncio
+async def test_non_test_class_node_has_is_test_false(tmp_path):
+    c = await _cache(tmp_path)
+    await c.put(org_key=ORG, metadata_type="ApexClass", records=[
+        _Rec(Id="01p1", Name="AccountService", Body="public class AccountService {}"),
+    ])
+    g = await GraphBuilder(c).build(org_key=ORG)
+    node = g.get_node("01p1")
+    assert node.attributes["is_test"] is False

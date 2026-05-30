@@ -1628,4 +1628,125 @@ the "queryable graph" deliverable and the demo, and a REST route forces a
 graph-lifecycle decision (build at startup? per request? cached?) for a
 consumer (VS Code ext, Week 13) that doesn't exist yet. Add it when the
 consumer does.
+
+## Week 7 Day 1 — Test-class classifier + --no-tests filter
+
+### What shipped
+- `app/intelligence/graph/classifier.py` (new) — `is_test_class(record)`.
+  Two signals OR'd: (1) name ends in `Test` or `Tests` (case-insensitive,
+  word-boundary guarded so `ContestHelper` doesn't match); (2) body contains
+  `@isTest` annotation (case-insensitive, covers `@IsTest(SeeAllData=true)`).
+  Kept as a module-level function, not a class — classifiers are stateless
+  transforms (input → bool), a class would add indirection with no benefit.
+- `app/intelligence/graph/builder.py` — classifier wired into `_add_nodes()`.
+  `is_test_class(rec)` runs once per record at build time; result stored as
+  `node.attributes["is_test"]`. Queries and CLI never re-read bodies.
+- `app/intelligence/graph/query.py` — `find_never_referenced()` gains
+  `exclude_tests: bool = False`. When True, filters nodes where
+  `attributes["is_test"]` is True. Inner `_keep()` predicate used instead of
+  stacking conditions in the generator — same lesson as Week 6's comprehension
+  filter moment: when a generator condition needs branching, name it.
+- `app/interfaces/cli.py` — `never-referenced` command gains `--no-tests`
+  flag. Unfiltered output now annotates test nodes with `[test]` suffix so
+  both views (all 15 / production-only 3) are readable without running two
+  commands.
+- 17 classifier tests, 4 new query tests. Full unit suite: 106 passing.
+
+### Real-org verification
+- `never-referenced` (no flag): 15 results, 12 annotated `[test]` ✓
+- `never-referenced --no-tests`: 3 production entries only:
+  AsyncParksServices, PricingFlowAction, TriggerDispatcher ✓
+- Classifier correctly identifies all 12 test classes by name suffix alone
+  (all end in `Test` or `Tests`). The `@isTest` body signal is the safety net
+  for classes named outside the convention.
+
+### The signal this unlocks
+Week 6's `never-referenced` query was 80% noise (12/15 test classes). With
+`--no-tests`, the 3 production entries are clean signal for the first time:
+- `TriggerDispatcher` — likely framework dispatch entry point
+- `PricingFlowAction` — likely flow/invocable entry point
+- `AsyncParksServices` — likely @future or async entry point
+These are the dead-code / metadata-wired candidates worth eyeballing (carried
+from Week 6 parked list).
+
+### Python learning
+- **Inner predicate functions over stacked generator conditions.** The
+  `_keep(n)` function inside `find_never_referenced` handles three conditions
+  (in-degree, out-degree, is_test). Stacking them as `if a and b and (not
+  exclude_tests or not n.attributes.get(...))` inside a generator expression
+  is legal Python but hard to read and hard to test. Pulling it into a named
+  inner function reads as English and is independently debuggable. Rule: when
+  a generator's filter condition needs branching, name it — don't cram it.
+- **Module-level functions vs classes for stateless logic.** `classifier.py`
+  has no class. In Apex everything lives in a class — there's no choice.
+  Python has no such requirement. A stateless transform (record → bool) is
+  cleanly expressed as a plain function. A class wrapper would force a
+  pointless instantiation call and add `self` to a method that doesn't need
+  any instance state. Pythonic default: class only when you need state or
+  multiple related behaviours.
+
+### What's next — Day 2
+Apex pattern parser (`intelligence/apex/parser.py`). Pattern-based extraction
+from Apex class bodies: SOQL queries, DML statements, field references
+(SObject.Field__c dot-notation), class-level method calls. Output feeds the
+derive-vs-extract decision on Day 3. No ANTLR — regex patterns only.
+
+## Week 7 Day 2 — Apex pattern parser
+
+### What shipped
+- `app/intelligence/code/apex_parser.py` (new package `intelligence/code/`).
+  `parse_apex_body(body)` returns a `ParseResult` dataclass with four lists:
+  `soql_references`, `dml_references`, `field_references`, `class_references`.
+  Pure function — no I/O, no cache, no graph dependency.
+- Three fixes discovered and applied after first real-org run:
+  - Fix 1: `_strip_comments()` pre-processor removes `//` and `/* */` before
+    any pattern runs. Eliminated `www.apache`, `PMD.*` (from Javadoc),
+    `the`/`a` (from prose comments after FROM) as false positives.
+  - Fix 2: PascalCase filter on class refs — qualifiers starting lowercase
+    are variable names (`result`, `handler`, `this`), not class names. Dropped
+    them. Real Apex class names are PascalCase by convention.
+  - Fix 3: DML regex updated with optional `(?:new\s+)?` group to skip the
+    `new` keyword. `insert new Account()` now captures `Account`, not `new`.
+- `scripts/verify_parser.py` — real-org validation script (zero API calls).
+- 42 hermetic tests. Full unit suite: 148 passing.
+
+### Real-org verification results (34ms, 43 records)
+- 6 clean sObject nodes derivable from SOQL: Opportunity, Trigger_Action__mdt,
+  OpportunityLineItem, ProcessInstance, ProcessInstanceStep,
+  ProcessInstanceWorkitem
+- Residual SOQL noise: `the` (1), `elements` (1) — string literal false
+  positives, not fixable without string stripping, acceptable for Phase 1
+- Top class-call targets: Assert(44-test noise), TriggerBase(20),
+  TriggerActionFlow(18), MetadataTriggerHandler(15) — these become CALLS edges
+- `PMD.*` still in field refs — these are `@SuppressWarnings('PMD.X')` in live
+  code (not comments), so comment stripping can't remove them. Accepted noise.
+- Zero extractions: CaseObjectTrigger (minimal trigger), IDomain (interface) —
+  both expected
+
+### derive-vs-extract decision — now concrete (Day 3 ADR)
+Parser output confirms derive (Option B) is correct for Phase 1:
+- 6 real sObject nodes from SOQL alone is enough for the portfolio demo
+- Class-call edges (Apex→Apex via method calls) are a genuine graph enrichment
+  on top of the existing string-scan REFERENCES edges
+- Full extraction (Option A) would add metadata richness but cost a week;
+  the intelligence value is in the edges, not the node attributes
+
+### Python learning
+- **`re.DOTALL` flag.** Block comment stripping requires `re.DOTALL` so `.`
+  matches newlines. Without it, `/* multi\nline */` doesn't match because `.`
+  stops at `\n` by default. In Apex, `Pattern.DOTALL` is the equivalent flag.
+- **Non-capturing groups `(?:...)`** in the DML fix. `(?:new\s+)?` skips
+  `new` without creating a capture group that would shift `m.group(2)`.
+  In Apex: same syntax — `Pattern.compile("(?:new\\s+)?")`.
+- **`frozenset` for lookup tables.** `_SYSTEM_NAMESPACES` and `_DML_SKIP_TOKENS`
+  are `frozenset` not `set`. Frozenset is immutable and hashable — signals
+  "this is a constant, not state". In Apex: `static final Set<String>` in a
+  static initializer block is the closest equivalent, but it's mutable by
+  default (no true immutability in Apex collections).
+
+### What's next — Day 3
+Object/Field nodes + CALLS edges wired into the graph builder. Derive approach
+confirmed. Builder already type-agnostic (ADR-008/009) — extend
+`_METADATA_TYPE_TO_NODE_TYPE` map and add a second edge-building pass using
+the parser output.
 ---
