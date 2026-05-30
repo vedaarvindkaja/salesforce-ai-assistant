@@ -1579,4 +1579,53 @@ comprehension's condition needs a branch, name it — don't cram it.
 Day 6 — wire QueryEngine to a /graph/ REST route + the CLI command
 (`python -m ... query "what depends on X"`), then benchmark. The query
 engine and builder are both done and real-org-verified ahead of schedule.
+
+---
+
+## Week 6 Day 6 — CLI + real-org demo
+
+### What shipped
+- `app/interfaces/cli.py` — argparse CLI (ADR-001: interfaces/ layer, NOT
+  scripts/, because the CLI is a product surface not dev plumbing). Seven
+  commands: depends-on, dependencies (both --transitive), path, find,
+  orphans, never-referenced, stats. Handlers are pure functions returning
+  strings; only main() prints (testable without stdout capture).
+- Name->id resolution: exact match wins, single substring auto-resolves,
+  ambiguity prompts. The glue that makes it demoable (humans type names,
+  QueryEngine takes Ids).
+- 23 tests (handlers + name resolution + argparse wiring). Full suite 112.
+
+### Real-org demo results (arvindcom-dev-ed)
+- `depends-on TriggerActionFlow`: 12 direct, 13 transitive (extra hop reaches
+  TriggerActionFlowChangeEventTest). Blast-radius story works end to end.
+- `dependencies MetadataTriggerHandler`: 5 (FinalizerHandler, FormulaFilter,
+  TriggerAction, TriggerActionFlow, TriggerBase).
+- `orphans`: 1 (EdmcDealLineItemController) — consistent with Day 2.
+- `never-referenced`: 15.
+
+### never-referenced — prediction half-wrong AGAIN, and the real lesson
+I framed never-referenced (in==0, out>0) around metadata-wired trigger-action
+classes. Real output: 12 of 15 are *Test classes. Test classes are
+never-referenced for a mundane reason — the @isTest runner invokes them by
+annotation, not by code reference. So in==0/out>0 is the EXPECTED, boring
+state for every test class. Only 3 of the 15 are the interesting signal:
+AsyncParksServices, PricingFlowAction, TriggerDispatcher (likely flow/invocable
+entry points or framework dispatch). The query is correct but noise-dominated.
+Fixed the CLI header, which had claimed "often metadata-wired" — the data says
+otherwise, and a demo shouldn't make a claim the screen contradicts.
+
+### Test-class noise is now structural, not a parked nicety
+Third independent hit: (1) Week 5 Account search ranked 5 Tests above the prod
+handler; (2) Day 2 out-degree ranking dominated by Tests; (3) today
+never-referenced is 80% Tests. A node-level test-vs-production classifier
+(name ends in Test/Tests OR body has @isTest, stored as a node attribute at
+build time) would let every query de-rank/filter tests with one flag. Elevating
+from "parked product improvement" to a Week 7 first-class task at week-end.
+
+### REST /graph/ route — parked
+ROADMAP Day 6 listed a /graph/ REST route. Deferred: the CLI already satisfies
+the "queryable graph" deliverable and the demo, and a REST route forces a
+graph-lifecycle decision (build at startup? per request? cached?) for a
+consumer (VS Code ext, Week 13) that doesn't exist yet. Add it when the
+consumer does.
 ---
