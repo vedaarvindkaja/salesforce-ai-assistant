@@ -34,7 +34,19 @@ from app.salesforce.token_storage import load_tokens
 
 _CACHE_PATH = Path("data") / "metadata_cache.db"
 
-# Human-readable labels for edge types in impact output.
+# Human-readable labels keyed by the edge's `via` attribute. The `via` is
+# more specific than the edge type — a CALLS edge can be an Apex method call,
+# a Flow invoking Apex, or a Flow calling a subflow. When an edge carries a
+# `via`, it drives the label; otherwise we fall back to _EDGE_LABEL by type.
+_VIA_LABEL: dict[str, str] = {
+    "soql": "SOQL/DML query",
+    "flow_trigger": "Flow trigger",
+    "flow_action": "Flow action",
+    "subflow": "subflow",
+}
+
+# Fallback labels keyed by edge type, for edges with no `via` attribute
+# (Apex→Apex method calls and string-scan REFERENCES).
 _EDGE_LABEL: dict[str, str] = {
     "USES_OBJECT": "SOQL/DML",
     "CALLS": "method call",
@@ -125,13 +137,16 @@ def _cmd_impact(engine: QueryEngine, graph: MetadataGraph, name: str) -> str:
     for e in edges:
         src = graph.get_node(e.source_id)
         src_label = _fmt_node(src) if src else e.source_id
-        relation = _EDGE_LABEL.get(e.edge_type.value, e.edge_type.value)
-        # Surface useful edge attributes inline.
+        via = e.attributes.get("via")
+        # The `via` attribute is more specific than the edge type; prefer it.
+        if via and via in _VIA_LABEL:
+            relation = _VIA_LABEL[via]
+        else:
+            relation = _EDGE_LABEL.get(e.edge_type.value, e.edge_type.value)
+        # Show the method name for Apex→Apex method calls (no `via`, has method).
         detail = ""
-        if e.edge_type == EdgeType.CALLS and e.attributes.get("method"):
+        if e.edge_type == EdgeType.CALLS and not via and e.attributes.get("method"):
             detail = f" ({e.attributes['method']}())"
-        elif e.edge_type == EdgeType.USES_OBJECT and e.attributes.get("via"):
-            detail = f" ({e.attributes['via'].upper()})"
         lines.append(f"  {src_label}  via {relation}{detail}")
     return "\n".join(lines)
 

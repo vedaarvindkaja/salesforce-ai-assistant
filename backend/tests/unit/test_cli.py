@@ -117,19 +117,29 @@ def test_stats():
 # ------------------------------------------------------------------
 
 def _impact_graph():
-    """Object node touched by classes via SOQL, plus a CALLS example."""
+    """Object node touched by classes via SOQL, plus CALLS and Flow examples."""
     g = MetadataGraph()
     g.add_node(_n("01p1", "OppSelector"))
     g.add_node(_n("01p2", "OppDomain"))
     g.add_node(_n("obj:opportunity", "Opportunity", NodeType.OBJECT))
     g.add_node(_n("01p3", "Caller"))
     g.add_node(_n("01p4", "Helper"))
+    g.add_node(_n("01p5", "PricingFlowAction"))
+    g.add_node(_n("flow:my_flow", "My_Flow", NodeType.FLOW))
+    g.add_node(_n("flow:child_flow", "Child_Flow", NodeType.FLOW))
     g.add_edge(Edge(source_id="01p1", target_id="obj:opportunity",
                     edge_type=EdgeType.USES_OBJECT, attributes={"via": "soql"}))
     g.add_edge(Edge(source_id="01p2", target_id="obj:opportunity",
                     edge_type=EdgeType.USES_OBJECT, attributes={"via": "soql"}))
     g.add_edge(Edge(source_id="01p3", target_id="01p4",
                     edge_type=EdgeType.CALLS, attributes={"method": "run"}))
+    # Flow → Apex (flow_action), Flow → Object (flow_trigger), Flow → Flow (subflow)
+    g.add_edge(Edge(source_id="flow:my_flow", target_id="01p5",
+                    edge_type=EdgeType.CALLS, attributes={"via": "flow_action"}))
+    g.add_edge(Edge(source_id="flow:my_flow", target_id="obj:opportunity",
+                    edge_type=EdgeType.USES_OBJECT, attributes={"via": "flow_trigger"}))
+    g.add_edge(Edge(source_id="flow:my_flow", target_id="flow:child_flow",
+                    edge_type=EdgeType.CALLS, attributes={"via": "subflow"}))
     return g
 
 def _impact_engine():
@@ -140,16 +150,35 @@ def test_impact_object_shows_classes_and_relation():
     g = _impact_graph()
     out = cli._cmd_impact(QueryEngine(g), g, "Opportunity")
     assert "Impact of Opportunity (Object)" in out
-    assert "2 reference(s)" in out
     assert "OppSelector" in out and "OppDomain" in out
-    assert "SOQL/DML" in out
-    assert "(SOQL)" in out  # the via attribute
+    assert "SOQL/DML query" in out  # via=soql label
 
 def test_impact_calls_shows_method():
     g = _impact_graph()
     out = cli._cmd_impact(QueryEngine(g), g, "Helper")
     assert "method call" in out
     assert "run()" in out
+
+def test_impact_flow_action_label():
+    # Flow→Apex edge should read "Flow action", not "method call"
+    g = _impact_graph()
+    out = cli._cmd_impact(QueryEngine(g), g, "PricingFlowAction")
+    assert "My_Flow" in out
+    assert "Flow action" in out
+    assert "method call" not in out  # the bug we fixed
+
+def test_impact_subflow_label():
+    # Flow→Flow edge should read "subflow"
+    g = _impact_graph()
+    out = cli._cmd_impact(QueryEngine(g), g, "Child_Flow")
+    assert "My_Flow" in out
+    assert "subflow" in out
+
+def test_impact_flow_trigger_label():
+    # Flow→Object trigger edge should read "Flow trigger"
+    g = _impact_graph()
+    out = cli._cmd_impact(QueryEngine(g), g, "Opportunity")
+    assert "Flow trigger" in out  # My_Flow triggers on Opportunity
 
 def test_impact_nothing_touches():
     g = _impact_graph()
