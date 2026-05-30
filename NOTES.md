@@ -1537,4 +1537,46 @@ the ROADMAP's Day 1-4 plan. Day 3-4 reduces to: optional perf hardening
 (load-once) if wanted, else straight into Day 5 query API
 (what_depends_on / what_does_it_depend_on / find_path / find_orphaned /
 find_never_referenced) and the CLI command. Likely pulls the week forward.
+
+---
+
+## Week 6 Day 3 — Graph query API (Day 5 work pulled forward)
+
+### What shipped
+- `app/intelligence/graph/query.py` — `QueryEngine`, six domain queries over
+  the in-memory graph: what_depends_on, what_does_it_depend_on (both
+  direct/transitive), find_path (returns edges w/ line numbers), find_by_name
+  (case-insensitive), find_orphaned, find_never_referenced.
+- 18 hermetic tests. Full suite 89 (71 + 18).
+
+### Design decisions
+- **Synchronous, not async.** The graph is in-memory; the builder already
+  paid the async SQLite cost. Queries need no await and return instantly.
+  A genuinely Python-shaped distinction with no Apex parallel.
+- **Direct vs transitive behind one flag** (`transitive: bool = False`,
+  default direct). Direct = interpretable, composable, least-surprising.
+  Transitive = blast radius (nx.ancestors/descendants), one keyword away.
+  A default-value choice, not an architecture fork — not ADR-worthy.
+- **Honored ADR-008's escape hatch** rather than re-opening it. query.py is
+  the single sanctioned consumer of MetadataGraph._graph for raw networkx
+  traversal. Consistency with my own 2-day-old ADR over churning models.py.
+- **find_never_referenced added** (in==0, out>0) per Day 2's data — the
+  query that actually exposes metadata-wired trigger-action classes the
+  orphan filter misses.
+
+### Python learning — comprehensions are for simple filters
+Tried to inline a ternary as a comprehension filter:
+    [n for n in xs if (cond1) if exact else (cond2)]   # SyntaxError
+Python parses the first `if` as the filter, then can't handle the trailing
+`if/else`. The Apex instinct is to add parens until it compiles. The Pythonic
+fix is to pull the branching condition into a named predicate:
+    def matches(name): return name == q if exact else q in name
+    [n for n in xs if matches(n.name)]
+Reads as English, testable in isolation, no parse ambiguity. Rule: when a
+comprehension's condition needs a branch, name it — don't cram it.
+
+### What's next
+Day 6 — wire QueryEngine to a /graph/ REST route + the CLI command
+(`python -m ... query "what depends on X"`), then benchmark. The query
+engine and builder are both done and real-org-verified ahead of schedule.
 ---
