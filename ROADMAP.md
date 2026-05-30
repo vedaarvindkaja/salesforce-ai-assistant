@@ -455,86 +455,80 @@ analyzer reuse, O(N²) accepted at scale). Full reasoning in NOTES.md.
 
 **Test count:** 44 → 112 (+68 across models/builder/query/cli).
 
-#### Week 7 — Apex parser, code intelligence, and field-level graph (20 hours)
+#### Week 7 — Apex parser, code intelligence, field + Flow graph (20 hours) ✅ — completed, ~18h
 
-**Goal:** Add Apex source understanding to the graph, and — with field
-references now extractable from code — add Object/Field nodes plus the
-field/relationship edges deferred from Week 6.
+**Goal (as planned):** Add Apex source understanding to the graph; add
+Object/Field nodes plus field/relationship edges deferred from Week 6.
 
-Reconcile against reality at week start (as every week). Two notes carried in
-from Week 6:
-- The cache holds only ApexClass + ApexTrigger. Object/Field nodes don't exist
-  yet; they must be created before field-reference edges can.
-- "Apex parser" here means PATTERN-BASED extraction (regex over structured
-  constructs: SOQL FROM/SELECT, DML, Object.Field refs, Class.method calls),
-  NOT a full ANTLR AST. Full AST is heavy and a Phase 2 candidate; pattern
-  extraction gets the high-value 80% (continues ADR-006's stance).
+**What actually shipped (reconciled):** Apex parser, Object nodes, code edges,
+AND the full Flow vertical slice (planned as a Day-5 trim candidate, but built
+in full because time allowed). Field-level nodes were consciously NOT built —
+the derive-vs-extract decision (ADR-010) settled on deriving Object nodes from
+references, and field nodes proved to be Phase-2-shaped (field-node explosion,
+authoritative extraction). The field-impact headline was delivered at the
+OBJECT level (`impact Opportunity`), which serves the demo without the field-node
+cost. Flow analysis became the week's marquee feature instead.
 
-**Day 1 (3 hours)** — Test-class classifier (elevated from parked → first-class)
-- Classify each node test-vs-production at build time: name ends in
-  Test/Tests OR body contains `@isTest`. Store as a Node attribute (`is_test`)
-- Wire one filter/de-rank flag through QueryEngine queries
-- Justification: test-class noise hit 3 independent queries (Week 5 ranking,
-  Week 6 out-degree, Week 6 never-referenced was 80% tests). Structural, not
-  cosmetic. Do it first — it improves the quality of every edge/query below
+**Day 1** — Test-class classifier ✅
+- `is_test` node attribute (name ends Test/Tests OR body has @isTest); module-
+  level function. `--no-tests` filter on never-referenced. Real org: 15 never-
+  referenced → 3 production once tests excluded. 106 tests.
 
-**Day 1-2 (5 hours)** — Apex pattern parser
-- `intelligence/code/apex_parser.py`
-- Extract from each Apex body: SOQL queries (→ referenced objects/fields),
-  DML ops (→ objects modified), explicit field refs (`Object.Field`), static
-  method calls (`Class.method` → class deps)
-- Identify trigger handlers and event types; mark `@InvocableMethod` as
-  flow-callable
-- Test coverage on parser logic (hermetic, synthetic Apex bodies)
+**Day 2** — Apex pattern parser ✅
+- `intelligence/code/apex_parser.py` — SOQL/DML/field-ref/class-call extraction.
+  Three real-org fixes: comment stripping, PascalCase class-ref filter, DML
+  `new` skip. 148 tests.
+- DECISION: derive-vs-extract settled → Option B (derive). ADR-010.
 
-**Day 3-4 (6 hours)** — Object/Field nodes + code edges into the graph
-- Create Object and Field nodes from references the parser discovers
-  (NodeType.OBJECT / NodeType.FIELD enum stubs from Week 6 become live)
-- Add edges: Apex → Object (SOQL/DML), Apex → Field (field refs),
-  Apex → Apex (static calls)
-- Builder is already type-agnostic (Week 6, ADR-008/009) — extend the
-  type→NodeType map; traversal/query/CLI code unchanged
-- **DECISION at week start (ADR-worthy): derive vs extract.**
-  Lean = DERIVE Object/Field nodes from Apex references only (no separate
-  EntityDefinition/FieldDefinition extraction). Unblocks the field-impact demo
-  cheaply; downside is non-referenced fields/objects don't appear. Extracting
-  authoritative metadata is the alternative — more complete, more work. Decide
-  before building Day 3
+**Day 3** — Object nodes + CALLS/USES_OBJECT edges; MultiDiGraph migration ✅
+- Pass 3 `_add_parser_edges`: derived Object nodes (obj:<name>, source=derived),
+  CALLS (Apex→Apex), USES_OBJECT (Apex→Object). Noise filter.
+- DECISION: DiGraph → MultiDiGraph after a failing Week-6 test caught silent
+  edge loss (a CALLS edge overwrote a REFERENCES edge between the same pair).
+  ADR-011 — the week's strongest interview story.
+- Real org: 50 nodes, 166 edges. REFERENCES held at 87 (proof of no loss). 156 tests.
 
-**Day 5 (4 hours)** — Flow analysis [SCOPE-RISK — first trim candidate]
-- `intelligence/code/flow_analyzer.py`
-- Parse Flow XML: triggering object, field refs, subflows, Apex actions invoked
-- PREREQUISITE not yet met: Flow metadata isn't extracted (recall Week 5
-  FlowDefinition.MasterLabel unreliability). Needs a Flow extraction step first
-- If Week 7 is running hot, push this whole day to Week 8 — the field-impact
-  headline does not depend on it
+**Day 4** — impact command + incoming_edges ✅
+- `query.py`: `incoming_edges()` returns Edge objects (first query to return
+  edges not nodes) so impact can show HOW a dependency exists.
+- `cli.py`: `impact` command. Real org: `impact TriggerBase` shows 30 refs with
+  method-level precision (parallel CALLS + REFERENCES edges, ADR-011 payoff). 169 tests.
 
-**Day 6 (3 hours)** — Dependency tracker [SCOPE-RISK — evaluate before building]
-- `intelligence/code/dependency_tracker.py`
-- "If I change X, what's affected?" — ranked impact list, tests de-ranked via
-  the Day 1 classifier
-- NOTE: once the graph has Object/Field edges, this may be a thin wrapper over
-  `what_depends_on(transitive=True)` + ranking. Decide whether it earns a new
-  module or folds into query.py. Don't build a module for the sake of the plan
-
-**Day 7 (1 hour)** — Commit, push, ROADMAP update, refresh Project knowledge,
-plan Week 8
+**Day 5** — Flow vertical slice ✅ (planned as trim candidate; built in full)
+- `salesforce/metadata_api.py` — Metadata SOAP client, readMetadata(Flow),
+  OAuth token as sessionId, synchronous (not retrieve/poll/zip). ADR-012.
+- `intelligence/code/flow_parser.py` — Flow XML → triggering object, apex
+  actions, subflows. actionType=apex filter; xsi-namespace fix.
+- `builder.py` pass 4 — Flow nodes + Flow→Object/Apex/Flow edges, reusing
+  USES_OBJECT/CALLS so impact works for free.
+- `cli.py` — via-driven impact labels (Flow action / subflow / Flow trigger).
+- Real org: 57 nodes (43 Apex + 8 Object + 6 Flow), 172 edges. THE PAYOFF:
+  `impact PricingFlowAction` → the Flow that invokes it, explaining its Week-6
+  "never-referenced" status. Sole orphan (Approval Orchestrator) confirmed a
+  correct finding, not a bug. 201 tests.
 
 **Deliverables (honest checks):**
-- ✅ Test-vs-production node classification, with query filtering
-- ✅ Apex pattern parser extracting SOQL/DML/field/class references
-- ✅ Object/Field nodes + Apex→Object/Field/Apex edges in the graph
-- ✅ Headline demo: `depends-on Account.Industry` (or similar real field) traces
-  the Apex classes that reference it — "what breaks if I remove this field"
-- ◻ Flow analyzer — TARGET, but first to slip to Week 8 if time-constrained
-- ◻ Dependency tracker — build only if it's more than a query.py wrapper
-- ⬜ Master-detail/lookup edges + validation-rule edges — still deferred; they
-  need CustomField/ValidationRule metadata extraction (Week 8 unless the
-  derive/extract decision pulls extraction forward)
-- ⬜ Full ANTLR AST parser — Phase 2 candidate; pattern extraction covers Phase 1
+- ✅ Test-vs-production classification + query filtering
+- ✅ Apex pattern parser (SOQL/DML/field/class refs)
+- ✅ Object nodes + Apex→Object/Apex edges (MultiDiGraph, ADR-011)
+- ✅ Headline demo at OBJECT level: `impact Opportunity` traces the classes that
+  query it; `impact PricingFlowAction` shows the Flow that invokes it
+- ✅ Flow analyzer — FULL slice (extraction + parser + edges), exceeded plan
+- ◻ FIELD nodes/edges — consciously NOT built; derive decision (ADR-010) kept to
+  objects; field-level is Phase-2-shaped. Field-impact served at object grain
+- ◻ Dependency tracker — folded into query.py (incoming_edges + impact), no
+  separate module, as the Day-6 note anticipated
+- ⬜ Flow record-operation edges (recordLookups/Creates/Updates) — deferred to
+  Week 8; the Flow equivalent of Apex SOQL/DML extraction
+- ⬜ Master-detail/lookup + validation-rule edges — still deferred (need
+  CustomField/ValidationRule extraction)
+- ⬜ Full ANTLR AST — Phase 2
 
-**ADRs likely this week:** derive-vs-extract Object/Field nodes; possibly a
-pattern-parser scope ADR. Flag genuine trade-offs only.
+**ADRs this week:** ADR-010 (derive Object nodes), ADR-011 (MultiDiGraph),
+ADR-012 (Flow via readMetadata SOAP). Full reasoning in NOTES.md.
+
+**Test count:** 112 → 201 (+89 across classifier/parser/builder/query/cli/
+metadata_api/flow_parser).
 
 ---
 
@@ -542,7 +536,17 @@ pattern-parser scope ADR. Flag genuine trade-offs only.
 
 #### Week 8 — Orchestration layer (15 hours)
 
-**Goal:** Make the graph queryable through Claude.
+#### Week 8 — Orchestration layer (15 hours)
+
+**Goal:** Make the graph queryable through Claude. Graph is richer than the
+original Week-8 assumption — it now has Apex, Object, and Flow nodes with
+REFERENCES/CALLS/USES_OBJECT edges (Week 7), so the orchestration layer reasons
+over a real metadata graph from day one.
+
+**Carried in from Week 7 (do at week start if appetite, else keep parked):**
+- Flow record-operation edges (recordLookups/Creates/Updates → Object/Field).
+  Real dependency the graph currently misses; the Flow analog of Apex SOQL/DML
+  extraction. NOT a blocker for orchestration — pull in only if Week 8 has slack.
 
 **Day 1-2 (5 hours)** — Claude client setup
 - `intelligence/orchestration/claude_client.py`
