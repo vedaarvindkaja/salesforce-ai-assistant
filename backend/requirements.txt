@@ -21,3 +21,5 @@ pytest-asyncio>=0.24.0
 # apscheduler>=3.10.0        # Week 7 — scheduled sync jobs
 
 aiosqlite
+
+networkx>=3.0
