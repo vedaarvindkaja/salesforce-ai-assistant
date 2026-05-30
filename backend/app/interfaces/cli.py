@@ -9,6 +9,7 @@ Examples (from backend/):
     python -m app.interfaces.cli depends-on TriggerActionFlow
     python -m app.interfaces.cli depends-on TriggerActionFlow --transitive
     python -m app.interfaces.cli dependencies MetadataTriggerHandler
+    python -m app.interfaces.cli impact Opportunity
     python -m app.interfaces.cli path AccountTrigger TriggerActionConstants
     python -m app.interfaces.cli find Trigger
     python -m app.interfaces.cli orphans
@@ -26,12 +27,19 @@ import asyncio
 from pathlib import Path
 
 from app.intelligence.graph.builder import GraphBuilder
-from app.intelligence.graph.models import MetadataGraph, Node
+from app.intelligence.graph.models import EdgeType, MetadataGraph, Node
 from app.intelligence.graph.query import QueryEngine
 from app.intelligence.graph.storage import MetadataCache
 from app.salesforce.token_storage import load_tokens
 
 _CACHE_PATH = Path("data") / "metadata_cache.db"
+
+# Human-readable labels for edge types in impact output.
+_EDGE_LABEL: dict[str, str] = {
+    "USES_OBJECT": "SOQL/DML",
+    "CALLS": "method call",
+    "REFERENCES": "name reference",
+}
 
 
 # ------------------------------------------------------------------
@@ -97,6 +105,37 @@ def _cmd_dependencies(engine: QueryEngine, name: str, *, transitive: bool) -> st
     return "\n".join([head, *(f"  {_fmt_node(n)}" for n in deps)])
 
 
+def _cmd_impact(engine: QueryEngine, graph: MetadataGraph, name: str) -> str:
+    """Impact view: which Apex touches this node, and HOW (edge type).
+
+    Built for the field-impact demo on Object nodes ('what breaks if I change
+    Opportunity'), but works on any node — for a class it shows callers and
+    referencers annotated by relationship type.
+    """
+    node, err = _resolve_one(engine, name)
+    if err:
+        return err
+
+    edges = engine.incoming_edges(node.id)
+    if not edges:
+        return f"Nothing touches {_fmt_node(node)}."
+
+    head = f"Impact of {_fmt_node(node)} — {len(edges)} reference(s) touch it:"
+    lines = [head]
+    for e in edges:
+        src = graph.get_node(e.source_id)
+        src_label = _fmt_node(src) if src else e.source_id
+        relation = _EDGE_LABEL.get(e.edge_type.value, e.edge_type.value)
+        # Surface useful edge attributes inline.
+        detail = ""
+        if e.edge_type == EdgeType.CALLS and e.attributes.get("method"):
+            detail = f" ({e.attributes['method']}())"
+        elif e.edge_type == EdgeType.USES_OBJECT and e.attributes.get("via"):
+            detail = f" ({e.attributes['via'].upper()})"
+        lines.append(f"  {src_label}  via {relation}{detail}")
+    return "\n".join(lines)
+
+
 def _cmd_path(engine: QueryEngine, graph: MetadataGraph,
               from_name: str, to_name: str) -> str:
     src, e1 = _resolve_one(engine, from_name)
@@ -144,7 +183,7 @@ def _cmd_never_referenced(engine: QueryEngine, *, no_tests: bool = False) -> str
     if not nodes:
         msg = "No never-referenced metadata"
         return msg + " (excluding test classes)." if no_tests else msg + "."
-    # Annotate each node so the user can see which are test classes at a glance.
+
     def _fmt(n: Node) -> str:
         suffix = "  [test]" if n.attributes.get("is_test") else ""
         return f"  {_fmt_node(n)}{suffix}"
@@ -188,6 +227,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--transitive", "-t", action="store_true",
                    help="everything NAME reaches, not just direct dependencies")
 
+    p = sub.add_parser("impact",
+                        help="what touches NAME and how (SOQL/DML/call/reference)")
+    p.add_argument("name")
+
     p = sub.add_parser("path", help="shortest dependency path FROM -> TO")
     p.add_argument("from_name")
     p.add_argument("to_name")
@@ -211,6 +254,8 @@ def _dispatch(args, engine: QueryEngine, graph: MetadataGraph) -> str:
         return _cmd_depends_on(engine, args.name, transitive=args.transitive)
     if args.command == "dependencies":
         return _cmd_dependencies(engine, args.name, transitive=args.transitive)
+    if args.command == "impact":
+        return _cmd_impact(engine, graph, args.name)
     if args.command == "path":
         return _cmd_path(engine, graph, args.from_name, args.to_name)
     if args.command == "find":

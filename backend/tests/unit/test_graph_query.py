@@ -1,4 +1,4 @@
-"""Hermetic tests for QueryEngine (Week 6, Day 5 pulled forward; Week 7 Day 1 additions)."""
+"""Hermetic tests for QueryEngine (Week 6 Day 5 + Week 7 Day 1/4 additions)."""
 import pytest
 
 from app.intelligence.graph.models import (
@@ -10,11 +10,6 @@ ORG = "https://test.my.salesforce.com"
 
 
 def _node(id, name, ntype=NodeType.APEX_CLASS, *, is_test: bool = False):
-    """Build a Node with optional is_test attribute.
-
-    is_test=False by default — all existing tests that call _node("A", "Alpha")
-    continue to work unchanged. Pass is_test=True to simulate a test class.
-    """
     return Node(
         id=id, name=name, node_type=ntype, org_key=ORG,
         attributes={"is_test": is_test},
@@ -25,14 +20,11 @@ def _edge(src, tgt, lines):
     return Edge(source_id=src, target_id=tgt, edge_type=EdgeType.REFERENCES,
                 attributes={"line_numbers": lines, "match_count": len(lines)})
 
-# Alias so existing test code using _ref_edge still works
 _ref_edge = _edge
 
 
 def _graph():
-    """  A --> B --> C ;  E --> B ;  D orphan
-    in/out:  A in0 out1 | B in2 out1 | C in1 out0 | D in0 out0 | E in0 out1
-    """
+    """  A --> B --> C ;  E --> B ;  D orphan """
     g = MetadataGraph()
     for nid, name in [("A","Alpha"),("B","Beta"),("C","Gamma"),
                       ("D","Delta"),("E","Epsilon")]:
@@ -142,15 +134,9 @@ def test_orphan_and_never_referenced_are_disjoint():
     assert orphans.isdisjoint(never)
 
 
-# ---- find_never_referenced with exclude_tests (Week 7 Day 1) ----
+# ---- find_never_referenced with exclude_tests ----
 
 def _graph_with_test_nodes():
-    """Graph where some never-referenced nodes are test classes.
-
-    PricingFlowAction  --> BaseService   (production, never referenced)
-    AccountServiceTest --> BaseService   (test class, never referenced)
-    BaseService is referenced by both — so it is NOT never-referenced.
-    """
     g = MetadataGraph()
     g.add_node(_node("A", "PricingFlowAction", is_test=False))
     g.add_node(_node("B", "AccountServiceTest", is_test=True))
@@ -184,7 +170,74 @@ def test_never_referenced_exclude_tests_empty_when_all_tests():
 
 
 def test_never_referenced_exclude_tests_false_is_same_as_default():
-    # Explicit False should behave identically to the default (include all).
     q = QueryEngine(_graph_with_test_nodes())
     assert (q.find_never_referenced(exclude_tests=False) ==
             q.find_never_referenced())
+
+
+# ---- incoming_edges (Week 7 Day 4 — impact view) ----
+
+def _impact_graph():
+    """Object node touched by two classes via different edge types.
+
+    OppSelector --USES_OBJECT(soql)--> Opportunity
+    OppDomain   --USES_OBJECT(soql)--> Opportunity
+    Caller      --CALLS(run)+REFERENCES--> Helper  (parallel edges)
+    """
+    g = MetadataGraph()
+    g.add_node(_node("01p1", "OppSelector"))
+    g.add_node(_node("01p2", "OppDomain"))
+    g.add_node(_node("obj:opportunity", "Opportunity", NodeType.OBJECT))
+    g.add_node(_node("01p3", "Caller"))
+    g.add_node(_node("01p4", "Helper"))
+
+    g.add_edge(Edge(source_id="01p1", target_id="obj:opportunity",
+                    edge_type=EdgeType.USES_OBJECT, attributes={"via": "soql"}))
+    g.add_edge(Edge(source_id="01p2", target_id="obj:opportunity",
+                    edge_type=EdgeType.USES_OBJECT, attributes={"via": "soql"}))
+    # Parallel edges: Caller both REFERENCES and CALLS Helper
+    g.add_edge(Edge(source_id="01p3", target_id="01p4",
+                    edge_type=EdgeType.REFERENCES, attributes={"line_numbers": [1]}))
+    g.add_edge(Edge(source_id="01p3", target_id="01p4",
+                    edge_type=EdgeType.CALLS, attributes={"method": "run"}))
+    return g
+
+
+def test_incoming_edges_returns_all_in_edges():
+    q = QueryEngine(_impact_graph())
+    edges = q.incoming_edges("obj:opportunity")
+    assert len(edges) == 2
+    assert all(e.edge_type == EdgeType.USES_OBJECT for e in edges)
+
+
+def test_incoming_edges_filtered_by_type():
+    q = QueryEngine(_impact_graph())
+    calls = q.incoming_edges("01p4", edge_type=EdgeType.CALLS)
+    assert len(calls) == 1
+    assert calls[0].attributes["method"] == "run"
+
+
+def test_incoming_edges_returns_parallel_edges():
+    # Helper has both a REFERENCES and a CALLS edge from Caller — both returned
+    q = QueryEngine(_impact_graph())
+    edges = q.incoming_edges("01p4")
+    types = {e.edge_type for e in edges}
+    assert types == {EdgeType.REFERENCES, EdgeType.CALLS}
+    assert len(edges) == 2
+
+
+def test_incoming_edges_missing_node():
+    q = QueryEngine(_impact_graph())
+    assert q.incoming_edges("nonexistent") == []
+
+
+def test_incoming_edges_no_in_edges():
+    # OppSelector has only out-edges, no in-edges
+    q = QueryEngine(_impact_graph())
+    assert q.incoming_edges("01p1") == []
+
+
+def test_incoming_edges_preserves_attributes():
+    q = QueryEngine(_impact_graph())
+    edges = q.incoming_edges("obj:opportunity")
+    assert all(e.attributes.get("via") == "soql" for e in edges)

@@ -9,6 +9,7 @@ the async SQLite cost), so queries need no await and return instantly.
 Vocabulary (edge semantics: source REFERENCES/CALLS/USES target, source --> target):
   what_depends_on(X)        -> who points at X         (predecessors / ancestors)
   what_does_it_depend_on(X) -> what X points at        (successors / descendants)
+  incoming_edges(X, type?)  -> the Edge objects pointing at X (for impact view)
   find_path(A, B)           -> shortest A-->B route as edges
   find_by_name(q)           -> nodes whose name matches q (case-insensitive)
   find_orphaned()           -> in==0 AND out==0  (dead / UI-bound)
@@ -17,13 +18,14 @@ Vocabulary (edge semantics: source REFERENCES/CALLS/USES target, source --> targ
 
 Transitive traversal uses raw networkx via the ADR-008 escape hatch.
 ADR-011: the underlying graph is a MultiDiGraph, so find_path picks one
-edge per hop (lowest key) when parallel edges exist between two nodes.
+edge per hop (lowest key) when parallel edges exist between two nodes,
+and incoming_edges returns every parallel edge separately.
 """
 from __future__ import annotations
 
 import networkx as nx
 
-from app.intelligence.graph.models import Edge, MetadataGraph, Node
+from app.intelligence.graph.models import Edge, EdgeType, MetadataGraph, Node
 
 
 class QueryEngine:
@@ -65,6 +67,48 @@ class QueryEngine:
         return self._nodes_for(ids)
 
     # ------------------------------------------------------------------
+    # Edge-level queries (for impact view — edge detail matters)
+    # ------------------------------------------------------------------
+
+    def incoming_edges(
+        self, node_id: str, *, edge_type: EdgeType | None = None
+    ) -> list[Edge]:
+        """Return the Edge objects pointing AT node_id (in-edges).
+
+        Unlike what_depends_on (which returns deduped Nodes), this keeps the
+        edge metadata — edge_type and attributes like via="soql" or
+        method="run" — so callers can show HOW the dependency exists.
+
+        MultiDiGraph (ADR-011): every parallel in-edge is returned separately.
+        A class that both CALLS and REFERENCES node_id yields two edges.
+
+        Args:
+            node_id: target node whose incoming edges we want.
+            edge_type: if given, only edges of this type are returned.
+
+        Returns:
+            List of Edge objects, sorted by (source name, edge type) for
+            deterministic output. Empty if node missing or no matching edges.
+        """
+        if node_id not in self._nx:
+            return []
+
+        edges: list[Edge] = []
+        # in_edges with keys+data on a MultiDiGraph: (src, tgt, key, data)
+        for src, _tgt, _key, data in self._nx.in_edges(node_id, keys=True, data=True):
+            edge = Edge(**data)
+            if edge_type is not None and edge.edge_type != edge_type:
+                continue
+            edges.append(edge)
+
+        def _sort_key(e: Edge) -> tuple[str, str]:
+            src_node = self._graph.get_node(e.source_id)
+            src_name = src_node.name if src_node else e.source_id
+            return (src_name.casefold(), e.edge_type.value)
+
+        return sorted(edges, key=_sort_key)
+
+    # ------------------------------------------------------------------
     # Paths
     # ------------------------------------------------------------------
 
@@ -72,10 +116,8 @@ class QueryEngine:
         """Shortest directed path from_id --> to_id, returned as the edges
         traversed. Empty list if either node is missing, same node, or no path.
 
-        MultiDiGraph (ADR-011): between two adjacent nodes there may be
-        several parallel edges (e.g. REFERENCES and CALLS). We pick the
-        first edge key deterministically and surface its data; the path
-        structure (which nodes) is unaffected by parallel edges.
+        MultiDiGraph (ADR-011): picks the first edge key per hop as a
+        representative edge; path structure is unaffected by parallel edges.
         """
         if from_id == to_id:
             return []
@@ -88,8 +130,6 @@ class QueryEngine:
 
         edges: list[Edge] = []
         for a, b in zip(node_path, node_path[1:]):
-            # MultiDiGraph: get_edge_data returns {key: data_dict, ...}.
-            # Pick the first key deterministically for a representative edge.
             edge_dict = self._nx.get_edge_data(a, b)
             first_key = sorted(edge_dict.keys())[0]
             edges.append(Edge(**edge_dict[first_key]))
@@ -116,8 +156,7 @@ class QueryEngine:
 
     def find_orphaned(self) -> list[Node]:
         """No edges in or out — dead code or UI-bound (Aura/LWC/VF refs
-        the Apex scan can't see). in_degree/out_degree on a MultiDiGraph
-        count parallel edges, but ==0 is unaffected by multiplicity."""
+        the Apex scan can't see)."""
         return sorted(
             (
                 n
@@ -158,9 +197,9 @@ class QueryEngine:
     # ------------------------------------------------------------------
 
     def _nodes_for(self, node_ids) -> list[Node]:
-        """Resolve an iterable of ids to Nodes, sorted by name for
-        deterministic output. Dedupes — predecessors()/successors() on a
-        MultiDiGraph may repeat a neighbor reached by parallel edges."""
+        """Resolve an iterable of ids to Nodes, sorted by name. Dedupes —
+        predecessors()/successors() on a MultiDiGraph may repeat a neighbor
+        reached by parallel edges."""
         seen: set[str] = set()
         nodes: list[Node] = []
         for i in node_ids:
@@ -177,29 +216,30 @@ class QueryEngine:
 # APEX EQUIVALENT (for comparison)
 # ============================================================
 # In-memory traversal over a Map<Id, Map<Id, List<Edge>>> adjacency
-# (List per pair = MultiDiGraph parallel edges). No networkx, so transitive
-# traversal is a manual BFS; in/out degree are map-size lookups.
+# (List per pair = MultiDiGraph parallel edges).
 #
 #    public class QueryEngine {
-#        Map<Id, Map<Id, List<Edge>>> forward;   // source -> target -> [edges]
+#        Map<Id, Map<Id, List<Edge>>> forward;
 #        Map<Id, Map<Id, List<Edge>>> reverse;
 #
-#        // find_path: pick first edge per hop (parallel edges collapse to one)
-#        public List<Edge> findPath(Id fromId, Id toId) {
-#            List<Id> nodePath = bfsShortestPath(fromId, toId);
-#            List<Edge> edges = new List<Edge>();
-#            for (Integer i = 0; i < nodePath.size() - 1; i++) {
-#                List<Edge> parallel = forward.get(nodePath[i]).get(nodePath[i+1]);
-#                edges.add(parallel[0]);   // representative edge
+#        // incoming_edges(X, edgeType): every in-edge, optionally filtered
+#        public List<Edge> incomingEdges(Id nodeId, String edgeType) {
+#            List<Edge> result = new List<Edge>();
+#            Map<Id, List<Edge>> sources = reverse.get(nodeId);
+#            if (sources == null) return result;
+#            for (List<Edge> parallel : sources.values()) {
+#                for (Edge e : parallel) {
+#                    if (edgeType == null || e.edgeType == edgeType)
+#                        result.add(e);
+#                }
 #            }
-#            return edges;
+#            return result;   // caller sorts
 #        }
 #    }
 #
 # Concept mapping:
-# - get_edge_data(a, b) -> {key: data}   → forward.get(a).get(b) -> List<Edge>
-# - sorted(keys)[0] (deterministic pick) → parallel[0] after sort
-# - _nodes_for dedup via set             → Set<Id> seen guard
-# - nx.ancestors / descendants           → manual BFS over reverse / forward
-# - in_degree==0 (parallel-edge-safe)    → reverse.get(id) == null || empty
+# - in_edges(node, keys=True, data=True)  → reverse.get(nodeId) -> Map<Id,List<Edge>>
+# - edge_type: EdgeType | None = None     → String edgeType param, null = no filter
+# - sorted(key=lambda) with name lookup   → List.sort() w/ Comparable wrapper
+# - MultiDiGraph parallel in-edges         → List<Edge> per source in reverse map
 # ============================================================
