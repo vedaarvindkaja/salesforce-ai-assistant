@@ -388,86 +388,153 @@ extract → cache → analyze → answer.)
 key), ADR-006 (string-scan before AST), ADR-007 (case-insensitive matching).
 Full reasoning in NOTES.md.
 
-#### Week 6 — Graph construction (20 hours)
+#### Week 6 — Graph construction (20 hours) ✅ — completed in ~16h (a day early)
 
 **Goal:** Convert extracted metadata into a queryable graph.
 
-**Day 1-2 (6 hours)** — Graph data model
-- Define node types: Object, Field, ApexClass, Trigger, Flow, ValidationRule, PermissionSet
-- Define edge types: REFERENCES, EXTENDS, USED_BY, MASTER_DETAIL, LOOKUP, GRANTS_ACCESS
-- Pydantic models for each
-- Use networkx as the underlying graph engine
+Plan reconciled against reality at week start (as in Week 5): the original
+plan assumed a cache containing Objects, Fields, Flows, and ValidationRules.
+The real cache holds only ApexClass + ApexTrigger, so node/edge scope was
+narrowed to what could actually be populated and tested. Field/relationship
+edges moved to Week 7 (they depend on the Apex parser). Day order also shifted
+— query API (planned Day 5) was pulled forward once the builder landed early.
 
-**Day 3-4 (6 hours)** — Graph builder
-- `intelligence/graph/builder.py`
-- Build graph from extracted metadata
-- Handle field references (formula fields, validation rules)
-- Handle master-detail and lookup relationships
-- Performance target: build graph for 1000+ metadata items in <5s
+**Day 1 (Day 1-2 budget)** — Graph data model ✅
+- `intelligence/graph/models.py` — NodeType/EdgeType enums, Node/Edge Pydantic
+  models, MetadataGraph (typed wrapper over networkx.DiGraph), GraphStats
+- Scoped to 2 populatable node types (ApexClass, ApexTrigger) + REFERENCES
+  edge; other 7 node / 6 edge types stubbed as enum values for Week 7-8
+- ADR-008 (MetadataGraph wraps networkx, not subclass/raw)
+- 16 hermetic tests
 
-**Day 5 (4 hours)** — Graph queries
-- `intelligence/graph/query.py`
-- API:
-  - `what_depends_on(metadata_id) -> list[Node]`
-  - `what_does_it_depend_on(metadata_id) -> list[Node]`
-  - `find_path(from_id, to_id) -> list[Edge]`
-  - `find_by_name(query) -> list[Node]`
-  - `find_orphaned_metadata() -> list[Node]`
+**Day 2 (Day 3-4 budget)** — Graph builder ✅
+- `intelligence/graph/builder.py` — cache → MetadataGraph. Nodes per record;
+  REFERENCES edges built by reusing the reference analyzer (ADR-009),
+  self-edges excluded
+- `scripts/verify_graph.py` — real-org build report
+- Real-org verified: 43 nodes (42 classes + 1 trigger), 87 edges, 268 ms
+  (well under the <5s / 1000-item target). Hubs = framework core
+  (TriggerActionFlow, TriggerBase, MetadataTriggerHandler)
+- 11 hermetic tests
+- DEFERRED to Week 7: field references (formula fields, validation rules),
+  master-detail/lookup edges — no Object/Field data in cache yet. Builder is
+  type-agnostic; Week 7 adds node types without touching traversal/query code
 
-**Day 6 (3 hours)** — SQLite storage
-- `intelligence/graph/storage.py`
-- Persist graph snapshots for fast reload
-- Incremental update support (only refresh changed metadata)
+**Day 3 (Day 5 work, pulled forward)** — Graph query API ✅
+- `intelligence/graph/query.py` — QueryEngine (synchronous; graph is in-memory)
+- API: what_depends_on, what_does_it_depend_on (both direct + --transitive via
+  networkx ancestors/descendants), find_path (returns edges w/ line numbers),
+  find_by_name (case-insensitive), find_orphaned, find_never_referenced (NEW —
+  in==0/out>0, added from Day 2's real-org finding)
+- 18 hermetic tests
 
-**Day 7 (1 hour)** — Commit, push, plan Week 7
+**Day 6** — CLI ✅
+- `app/interfaces/cli.py` (ADR-001 interfaces/ layer — product surface, not
+  scripts/ plumbing). argparse; 7 commands; pure-function handlers
+- Real-org demo verified: depends-on/dependencies/path/find/orphans/
+  never-referenced/stats all answer against the live org in <0.5s
+- 23 tests
+
+**Day 7 (1 hour)** — Commit, push, ROADMAP update, refresh Project knowledge,
+plan Week 7
 
 **Deliverables:**
-- ✅ Working graph of metadata relationships
-- ✅ Query API for dependency traversal
-- ✅ Persistent storage with incremental refresh
-- ✅ CLI command: `python -m intelligence.cli query "what depends on Account.Industry"`
-- ✅ Performance benchmark documented
+- ✅ Working graph of metadata relationships (43 nodes, 87 edges, real org)
+- ✅ Query API for dependency traversal (6 queries, direct + transitive)
+- ✅ CLI command: `python -m app.interfaces.cli depends-on TriggerActionFlow`
+  (and 6 more) — replaces the planned `intelligence.cli query "..."` form
+- ✅ Performance benchmark documented (268 ms; profiled as I/O-bound, not regex)
+- ⬜ Graph snapshot persistence + incremental refresh — PARKED. Option A (rebuild
+  from cache on startup, ~0.3s) chosen; persistence (Option B) deferred to
+  Phase 2 unless build time becomes a problem
+- ⬜ REST `/graph/` route — PARKED to Week 7+ (add when the VS Code consumer
+  exists; avoids a premature graph-lifecycle decision)
 
----
+**ADRs this week:** ADR-008 (MetadataGraph wraps networkx), ADR-009 (edges via
+analyzer reuse, O(N²) accepted at scale). Full reasoning in NOTES.md.
 
-#### Week 7 — Apex parser and code intelligence (20 hours)
+**Test count:** 44 → 112 (+68 across models/builder/query/cli).
 
-**Goal:** Add Apex source understanding to the graph.
+#### Week 7 — Apex parser, code intelligence, and field-level graph (20 hours)
 
-**Day 1-2 (6 hours)** — Apex tokenization
+**Goal:** Add Apex source understanding to the graph, and — with field
+references now extractable from code — add Object/Field nodes plus the
+field/relationship edges deferred from Week 6.
+
+Reconcile against reality at week start (as every week). Two notes carried in
+from Week 6:
+- The cache holds only ApexClass + ApexTrigger. Object/Field nodes don't exist
+  yet; they must be created before field-reference edges can.
+- "Apex parser" here means PATTERN-BASED extraction (regex over structured
+  constructs: SOQL FROM/SELECT, DML, Object.Field refs, Class.method calls),
+  NOT a full ANTLR AST. Full AST is heavy and a Phase 2 candidate; pattern
+  extraction gets the high-value 80% (continues ADR-006's stance).
+
+**Day 1 (3 hours)** — Test-class classifier (elevated from parked → first-class)
+- Classify each node test-vs-production at build time: name ends in
+  Test/Tests OR body contains `@isTest`. Store as a Node attribute (`is_test`)
+- Wire one filter/de-rank flag through QueryEngine queries
+- Justification: test-class noise hit 3 independent queries (Week 5 ranking,
+  Week 6 out-degree, Week 6 never-referenced was 80% tests). Structural, not
+  cosmetic. Do it first — it improves the quality of every edge/query below
+
+**Day 1-2 (5 hours)** — Apex pattern parser
 - `intelligence/code/apex_parser.py`
-- Start simple: regex-based extraction of SOQL queries, DML operations, class references
-- Identify field references in code
-- Identify trigger handlers and event types
+- Extract from each Apex body: SOQL queries (→ referenced objects/fields),
+  DML ops (→ objects modified), explicit field refs (`Object.Field`), static
+  method calls (`Class.method` → class deps)
+- Identify trigger handlers and event types; mark `@InvocableMethod` as
+  flow-callable
+- Test coverage on parser logic (hermetic, synthetic Apex bodies)
 
-**Day 3-4 (6 hours)** — Dependency extraction
-- For each Apex class:
-  - Find SOQL queries → extract referenced objects/fields
-  - Find DML operations → extract objects modified
-  - Find static method calls → extract class dependencies
-  - Find @InvocableMethod → mark as flow-callable
-- Add Apex nodes and edges to the graph
+**Day 3-4 (6 hours)** — Object/Field nodes + code edges into the graph
+- Create Object and Field nodes from references the parser discovers
+  (NodeType.OBJECT / NodeType.FIELD enum stubs from Week 6 become live)
+- Add edges: Apex → Object (SOQL/DML), Apex → Field (field refs),
+  Apex → Apex (static calls)
+- Builder is already type-agnostic (Week 6, ADR-008/009) — extend the
+  type→NodeType map; traversal/query/CLI code unchanged
+- **DECISION at week start (ADR-worthy): derive vs extract.**
+  Lean = DERIVE Object/Field nodes from Apex references only (no separate
+  EntityDefinition/FieldDefinition extraction). Unblocks the field-impact demo
+  cheaply; downside is non-referenced fields/objects don't appear. Extracting
+  authoritative metadata is the alternative — more complete, more work. Decide
+  before building Day 3
 
-**Day 5 (4 hours)** — Flow analysis
+**Day 5 (4 hours)** — Flow analysis [SCOPE-RISK — first trim candidate]
 - `intelligence/code/flow_analyzer.py`
-- Parse Flow XML
-- Extract: triggering object, referenced fields, sub-flows called, Apex actions invoked
-- Add flow dependencies to graph
+- Parse Flow XML: triggering object, field refs, subflows, Apex actions invoked
+- PREREQUISITE not yet met: Flow metadata isn't extracted (recall Week 5
+  FlowDefinition.MasterLabel unreliability). Needs a Flow extraction step first
+- If Week 7 is running hot, push this whole day to Week 8 — the field-impact
+  headline does not depend on it
 
-**Day 6 (3 hours)** — Dependency tracker
+**Day 6 (3 hours)** — Dependency tracker [SCOPE-RISK — evaluate before building]
 - `intelligence/code/dependency_tracker.py`
-- High-level API: "If I change X, what's affected?"
-- Combines metadata graph + code graph
-- Returns ranked list of impacts
+- "If I change X, what's affected?" — ranked impact list, tests de-ranked via
+  the Day 1 classifier
+- NOTE: once the graph has Object/Field edges, this may be a thin wrapper over
+  `what_depends_on(transitive=True)` + ranking. Decide whether it earns a new
+  module or folds into query.py. Don't build a module for the sake of the plan
 
-**Day 7 (1 hour)** — Commit, push, plan Week 8
+**Day 7 (1 hour)** — Commit, push, ROADMAP update, refresh Project knowledge,
+plan Week 8
 
-**Deliverables:**
-- ✅ Apex parser extracting key metadata references
-- ✅ Flow analyzer working on real Flow XML
-- ✅ Dependency tracker combining metadata + code
-- ✅ Example: "What breaks if I remove Account.Industry field?" → traces through Apex, Flows, Validation Rules
-- ✅ Test coverage on parser logic
+**Deliverables (honest checks):**
+- ✅ Test-vs-production node classification, with query filtering
+- ✅ Apex pattern parser extracting SOQL/DML/field/class references
+- ✅ Object/Field nodes + Apex→Object/Field/Apex edges in the graph
+- ✅ Headline demo: `depends-on Account.Industry` (or similar real field) traces
+  the Apex classes that reference it — "what breaks if I remove this field"
+- ◻ Flow analyzer — TARGET, but first to slip to Week 8 if time-constrained
+- ◻ Dependency tracker — build only if it's more than a query.py wrapper
+- ⬜ Master-detail/lookup edges + validation-rule edges — still deferred; they
+  need CustomField/ValidationRule metadata extraction (Week 8 unless the
+  derive/extract decision pulls extraction forward)
+- ⬜ Full ANTLR AST parser — Phase 2 candidate; pattern extraction covers Phase 1
+
+**ADRs likely this week:** derive-vs-extract Object/Field nodes; possibly a
+pattern-parser scope ADR. Flag genuine trade-offs only.
 
 ---
 
