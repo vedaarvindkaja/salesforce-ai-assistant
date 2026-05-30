@@ -1852,4 +1852,234 @@ the week is running hot. Decision point: we're on Day 4 and the field-impact
 headline is DONE and demoable. Evaluate at start of Day 5 whether Flow analysis
 earns the time or slips to Week 8 (its prerequisite — Flow metadata extraction
 — isn't even built yet).
+
+## Week 7 Day 5 — Flow vertical slice (SOAP extraction + XML parser + graph edges)
+
+### What shipped
+Full Flow analysis, all three layers, against the real org:
+- **metadata_api.py** — Metadata API SOAP client. readMetadata('Flow', names),
+  synchronous, OAuth access_token reused as the SOAP <sessionId> (probed and
+  confirmed Day 5 step 0 — no separate SOAP login). Chosen over retrieve()
+  (async poll + zip) because we need structure for analysis, not deployable
+  artifacts — collapses a 4-layer stack to 2. Batches at 10 names (the
+  readMetadata cap). Caches RAW XML, consistent with caching ApexClass.Body raw.
+- **flow_parser.py** — Flow XML -> FlowParseResult (triggering object, apex
+  actions, subflows). ElementTree, not regex (nested well-formed XML).
+- **builder.py pass 4** — Flow nodes (id=flow:<name>), then Flow->Object
+  (USES_OBJECT via=flow_trigger), Flow->Apex (CALLS via=flow_action),
+  Flow->Flow (CALLS via=subflow). Reuses existing edge types so impact works
+  for free. Two sub-passes: all Flow nodes first, then edges, so subflow
+  targets resolve regardless of order.
+- **cli.py** — impact labels now driven by the edge `via` attribute, not just
+  edge type. Fixes Flow edges that were mislabeled "method call".
+- 201 tests (169 -> 201).
+
+### Real-org result
+57 nodes (43 Apex + 8 Object + 6 Flow), 172 edges
+(87 REFERENCES + 74 CALLS + 11 USES_OBJECT). REFERENCES held at 87 across all
+four passes — MultiDiGraph still preventing edge loss (ADR-011).
+
+**The payoff:** `impact PricingFlowAction` -> Opportunity_Sales_Orchestration_Flow
+via Flow action. PricingFlowAction was a Week-6 "never-referenced" production
+class; the Flow->Apex edge explains why — a Flow invokes it, invisible to an
+Apex-only string scan. The metadata-graph thesis demonstrated in one command.
+It correctly dropped off the never-referenced list once the edge existed.
+
+### Bugs caught (both before shipping)
+1. **xsi-namespace unbound-prefix.** The bare <records> block from readMetadata
+   carries xsi:type="Flow", but the xsi prefix is declared on the SOAP envelope
+   (stripped during block extraction). ElementTree rejected it ("unbound
+   prefix"). Fix: wrap the fragment in a synthetic root declaring xsi, then
+   descend to the records element. Caught by sandbox verification against real
+   XML structure, not the hermetic tests.
+2. **actionType filter.** Not every <actionCalls> is a Flow->Apex edge. The
+   Approval Orchestrator's actionCall was actionType=submit (an approval
+   action), not apex. Filtering on actionType=apex prevents a phantom edge to a
+   class named "submit". Verified against the real dump.
+
+### Real-org finding — a correct orphan
+`Opportunity_Approval_Orchestrator` is the sole orphan, and that's the RIGHT
+answer. Its <start> has no <object> (autolaunched, not record-triggered —
+<start> just connects to a Get_Opportunity lookup). Its one actionCall is
+submit (filtered). The Opportunity it references is a runtime recordLookups,
+not a trigger. So: no incoming edges, no outgoing graph edges -> orphan. In a
+trigger-actions org, an orphan flow means invoked outside scanned metadata
+(button/quick-action/approval process) or dead. Exactly the human-eyeball
+signal the tool exists to surface.
+
+CAVEAT banked: verify_metadata_api.py's "start object" line uses a loose regex
+(<object> anywhere in XML) and gave a FALSE POSITIVE here — reported "start
+object: Opportunity" when the object was only in a recordLookups. The parser's
+stricter rule (object must be a direct child of <start>) was correct. Trust the
+parser over that recon line.
+
+### Python learning
+- **ElementTree namespace handling.** fromstring on a fragment with an
+  undeclared prefix raises ParseError "unbound prefix". A namespace prefix is
+  only valid where declared; extracting a sub-element loses ancestor xmlns
+  declarations. Wrapping in a synthetic root that re-declares the prefix is the
+  fix. _localname() strips the {namespace} ET adds to every tag.
+- **Let the data's own discriminator drive logic, not the container type.**
+  Both the parser (actionType=apex) and the CLI (via attribute) decide on a
+  specific field rather than the broad type. CALLS-the-edge-type isn't enough to
+  label an edge; via tells you whether it's a method call, flow action, or
+  subflow. Same lesson in two places this week.
+
+### Parked to Week 8 (deliberate, not dropped)
+- **Flow record-operation edges.** Flows reference objects/fields in
+  recordLookups/recordCreates/recordUpdates (not just the trigger). A real
+  dependency the graph currently misses (the Approval Orchestrator DOES depend
+  on Opportunity via a lookup). It's the Flow equivalent of Apex SOQL/DML
+  extraction — a whole sub-feature with field-level reach — so it belongs as a
+  deliberate Week 8 task, not a last-day add.
+
+
+
+  ## ADR-010 — Derive Object nodes from the Apex parser, not Tooling API extraction
+
+**Status:** Accepted
+**Date:** Week 7, Day 3
+
+**Decision:** Object nodes are DERIVED from references the Apex/Flow parsers
+discover (SOQL FROM targets, DML targets, Flow triggering objects), not
+EXTRACTED as authoritative records from the Tooling API (EntityDefinition).
+A derived Object node has id `obj:<name casefold>`, carries `source="derived"`,
+and exists only because some code or flow references it.
+
+**Alternatives considered:**
+- **Extract authoritative objects** via Tooling EntityDefinition (and
+  FieldDefinition for fields). Every object in the org becomes a node whether
+  or not anything references it; nodes carry real metadata (label, key prefix,
+  custom-vs-standard).
+- **Hybrid** — derive now, backfill authoritative metadata onto derived nodes
+  in a later pass.
+
+**Trade-offs:**
+- ✅ Cheap and immediate — Object nodes fall out of parsing we already do for
+  edges. No new extraction, no new API calls, no new cache type. ~1 day vs ~1
+  week for full EntityDefinition/FieldDefinition extraction.
+- ✅ The graph only contains objects that actually participate in dependencies,
+  which is exactly what the impact/depends-on queries care about. No noise from
+  hundreds of unreferenced standard objects.
+- ❌ Objects nothing references don't appear. "What uses Lead?" returns nothing
+  if no Apex/Flow touches Lead — but that's arguably the correct answer for a
+  dependency graph (if nothing uses it, it's not in the dependency story).
+- ❌ Derived nodes have no metadata richness (no label, no field list, no
+  custom/standard flag). source="derived" marks them so Phase 2 can enrich.
+- ❌ Name-based ids (`obj:account`) not Salesforce ids — a derived Account and
+  an extracted Account would need reconciling if we add extraction later. The
+  casefold id scheme is the reconciliation key.
+
+**Why this over extraction:** The value of Phase 1 is the EDGES — "what depends
+on what" — not node metadata completeness. A dependency graph answers "if I
+change X, what breaks"; that needs the objects that participate in dependencies,
+which derivation gives for free. Authoritative extraction is a real feature with
+real cost (two new Tooling queries, two new cache types, field-node explosion)
+whose payoff — objects/fields nothing references — doesn't serve the Phase 1
+demo. Deferred to Phase 2, with source="derived" as the seam to enrich along.
+
+---
+
+## ADR-011 — MetadataGraph uses MultiDiGraph, not DiGraph
+
+**Status:** Accepted
+**Date:** Week 7, Day 3
+
+**Decision:** The underlying networkx graph is a `MultiDiGraph` (parallel edges
+allowed between the same ordered node pair), not a `DiGraph` (at most one edge
+per ordered pair). This supersedes the DiGraph choice implied in ADR-008.
+
+**Context — how it surfaced:** A Week-6 test, `test_edge_attributes_carry_lines
+_and_count`, started failing when Day-3 added CALLS edges. The cause was silent
+data loss: a DiGraph allows only ONE edge from A to B, so when class A both
+REFERENCES class B (string-scan, pass 2) AND CALLS a method on B (parser, pass
+3), the second edge silently OVERWROTE the first. The graph quietly dropped a
+real dependency and nobody would have known without that test.
+
+**Alternatives considered:**
+- **Keep DiGraph, merge edge types onto one edge** — store a set of types in a
+  single edge's attributes (e.g. `types={REFERENCES, CALLS}`). One edge per
+  pair, no parallel edges.
+- **Keep DiGraph, drop the "lesser" edge** — when CALLS and REFERENCES exist
+  between a pair, keep only one by some priority rule.
+- **MultiDiGraph** — allow both edges to coexist as distinct parallel edges,
+  each with its own type and attributes.
+
+**Trade-offs:**
+- ✅ No data loss — every typed relationship between two nodes is preserved.
+  The impact command can show "TriggerBase is touched by class X via method
+  call isBypassed() AND via name reference" — both true, both shown.
+- ✅ Honest model — a class really can depend on another in multiple distinct
+  ways; collapsing them loses information a developer needs.
+- ❌ Traversal complexity — successors()/predecessors() can return the same
+  neighbor multiple times (once per parallel edge), so they must dedupe by node
+  id. get_edge_data() returns `{key: data}` not `data`. find_path picks one
+  edge per hop (lowest key) as representative.
+- ❌ Slightly more memory (multiple edge records per pair) — negligible at scale.
+
+**Why this over merging:** Merging types onto one edge sounds tidy but loses
+per-relationship attributes — a CALLS edge carries `method="isBypassed"`, a
+REFERENCES edge carries `line_numbers=[...]`; they can't share one attribute
+bag without ambiguity ("which line number belongs to which relationship?").
+Dropping the lesser edge is strictly worse — deliberate data loss. MultiDiGraph
+models reality: distinct relationships are distinct edges. The dedup cost in
+traversal is a few lines; the alternative is a graph that lies about
+dependencies.
+
+**Strongest lesson:** A test written for an unrelated reason (Week 6 edge
+attributes) caught a silent correctness bug introduced two weeks later (Day 3
+CALLS edges). The test didn't fail loudly because of a crash — it failed
+because the data was wrong. This is the case for testing data correctness, not
+just "does it run."
+
+---
+
+## ADR-012 — Flow extraction via Metadata API readMetadata, not Tooling or retrieve()
+
+**Status:** Accepted
+**Date:** Week 7, Day 5
+
+**Decision:** Flow structure is extracted via the Metadata API SOAP operation
+`readMetadata('Flow', names)`, authenticated with the existing OAuth
+access_token as the SOAP `<sessionId>`. Not the Tooling API's Flow.Metadata
+field, and not the Metadata API's `retrieve()` operation.
+
+**Alternatives considered:**
+- **Tooling API Flow.Metadata** — query the Flow record, read its `Metadata`
+  field as a JSON structure. Stays in the existing REST/JSON stack.
+- **Metadata API retrieve()** — the canonical metadata-deployment path: POST a
+  package manifest, get an async result id, poll checkRetrieveStatus until done,
+  download a base64 zip, unzip, parse the .flow XML files.
+- **Metadata API readMetadata()** — synchronous: POST a SOAP envelope naming the
+  flows, get the Flow structure back directly in the SOAP response body.
+
+**Trade-offs:**
+- ✅ readMetadata is SYNCHRONOUS — one call in, structure back. No async result
+  id, no polling loop, no checkRetrieveStatus, no backoff. retrieve() is async.
+- ✅ Returns structure directly as SOAP XML — no base64 zip to decode, no
+  archive to unzip. retrieve() returns a zip; that's a whole extra layer.
+- ✅ Authoritative source — it IS the Metadata API, the canonical metadata,
+  unlike the Tooling API's secondary Flow.Metadata exposure.
+- ✅ OAuth token works as the SOAP sessionId (probed Day 5 step 0) — no separate
+  SOAP login() flow needed; one auth path shared with the REST/Tooling clients.
+- ❌ SOAP, not REST — a foreign protocol in an otherwise REST/JSON stack. Needs
+  hand-built XML envelopes and XML response parsing (vs JSON everywhere else).
+- ❌ 10-records-per-call cap — must batch. (Non-issue at 6 flows; batching added
+  anyway for correctness.)
+- ❌ Tooling's Flow.Metadata would have stayed in JSON/REST — but its reliability
+  was unproven (cf. the FlowDefinition.MasterLabel unreliability from Week 5),
+  and it's a secondary exposure, not the authoritative metadata.
+
+**Why readMetadata over retrieve():** retrieve() is correct for its problem —
+pulling deployable file artifacts as a package. Our problem is different: read
+Flow STRUCTURE for analysis. readMetadata fits that exactly and collapses the
+4-layer retrieve() stack (envelope → async poll → zip decode → XML parse) to 2
+(envelope → XML parse). Choosing the operation that matches the actual need,
+not the most powerful one.
+
+**Why Metadata SOAP over Tooling JSON:** The portfolio thesis is "metadata
+graph." Reading the authoritative Metadata API is more credible than a Tooling
+side-channel, and avoids betting on Tooling's unproven Flow.Metadata
+reliability. The cost (a SOAP client in a REST stack) was scoped and accepted
+deliberately — see the Day-5 SOAP probe that de-risked it before building.
 ---
