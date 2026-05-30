@@ -1468,4 +1468,73 @@ what shouldn't be public; inheritance can't.
 **Why not pure-Pydantic:** networkx gives shortest-path, connected-components,
 and cycle detection for free. Reimplementing those in adjacency-dict logic is
 Phase 2 pain with no Phase 1 payoff.
+
+---
+
+## Week 6 Day 2 — Graph builder + real-org verification
+
+### What shipped
+- `app/intelligence/graph/builder.py` — `GraphBuilder`. Two passes over the
+  cache: one Node per record (ApexClass, ApexTrigger), then REFERENCES edges
+  built by running the reference analyzer with each node's name as the target
+  identifier. Self-edges excluded; edges only to known nodes. ADR-009.
+- `scripts/verify_graph.py` — builds the graph from the real local cache
+  (zero API calls) and reports hubs, dependency counts, orphans, build time.
+- 11 hermetic builder tests. Full suite 71 (60 + 11).
+
+### Real-org result (arvindcom-dev-ed)
+43 nodes (42 classes + 1 trigger), 87 edges, built in 268 ms.
+
+- **Hubs (in-degree) = framework core, as expected.** TriggerActionFlow (12),
+  TriggerBase (11), MetadataTriggerHandler (9), TriggerAction (8),
+  TriggerActionConstants (8). The graph correctly flags the high-blast-radius
+  classes. A change to TriggerActionFlow touches 12 dependents.
+- **Out-degree dominated by test classes.** MetadataTriggerHandlerTest (6),
+  four *Test classes at 5. Tests instantiate what they cover, inflating
+  out-degree. Independently validates parked item 1 (rank production above
+  test) — tests pollute BOTH directions of ranking, not just ref counts.
+- **1 orphan: EdmcDealLineItemController.** Zero Apex refs in or out. A
+  controller with no Apex links is almost certainly UI-bound (Aura/LWC/VF —
+  invisible to an Apex string scan) or dead code. Concrete actionable insight;
+  worth manual triage.
+
+### Prediction vs reality (the honest retro)
+I predicted metadata-wired action classes would surface as ORPHANS. Wrong.
+Only 1 orphan appeared, and it's a UI controller, not an action class.
+
+Why the prediction failed: I conflated "orphan" (in-degree 0 AND out-degree 0)
+with "nothing in Apex references it" (in-degree 0 only). Trigger-actions
+action classes ARE invisible by name (wired via Trigger_Action__mdt strings,
+not Apex) — so in-degree 0 — but their bodies still `implements
+TriggerAction.BeforeInsert`, giving them out-edges. The out-edge disqualifies
+them as orphans. The orphan filter is too strict to catch the metadata-wired
+classes I was looking for.
+
+Correction: the right lens for "metadata/UI-wired, never called from Apex" is
+IN-DEGREE 0, not orphan. Folding this into the Day 5 query API as a distinct
+query alongside find_orphaned.
+
+### Perf finding — refines ADR-009
+ADR-009 framed the cost as "O(N^2) body scans." More precisely: the 268 ms is
+dominated by repeated SQLite I/O, not regex. ~43 analyzer calls x 2
+connections each (per-op connection, ADR-004) = ~88 connect/close cycles,
+each re-reading all 42 bodies. Regex is ~18 ms of the 268 ms; the rest is
+connection churn. The scaling fix is therefore "load the cache once, scan in
+memory" — independent of matching strategy. Still 18x under the 5 s ROADMAP
+target at this scale, so parked, but now the cause is precise. (Confirms the
+quadratic: 7 synthetic nodes built in 11 ms; 43 nodes in 268 ms ~= (43/7)^2.)
+
+### Day 5 query API refinement (driven by today's data)
+- `find_orphaned()` — in==0 AND out==0. Catches dead/UI-bound classes
+  (EdmcDealLineItemController).
+- `find_never_referenced()` (in==0, out>0) — NEW. Catches metadata-wired
+  action classes the orphan filter misses. This is the query that actually
+  exposes the trigger-actions wiring gap.
+
+### What's next (Day 3-4 -> compressed)
+Day 1-2 delivered the model AND the builder AND real-org verification ahead of
+the ROADMAP's Day 1-4 plan. Day 3-4 reduces to: optional perf hardening
+(load-once) if wanted, else straight into Day 5 query API
+(what_depends_on / what_does_it_depend_on / find_path / find_orphaned /
+find_never_referenced) and the CLI command. Likely pulls the week forward.
 ---
