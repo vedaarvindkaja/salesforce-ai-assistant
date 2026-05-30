@@ -1800,4 +1800,56 @@ DiGraph as CALLS overwrote same-pair REFERENCES edges).
 field-impact demo: `depends-on Opportunity` should now trace the Apex classes
 that query/DML it (via USES_OBJECT edges). Wire Object-node lookup into the CLI
 name resolver so `obj:opportunity` resolves from a typed "Opportunity".
+
+## Week 7 Day 4 — impact command + incoming_edges (field-impact demo)
+
+### What shipped
+- `query.py`: new `incoming_edges(node_id, edge_type=None)` — returns the
+  actual Edge objects pointing at a node, not deduped Nodes. This is the
+  missing primitive: every prior query returned Node lists and discarded edge
+  metadata. impact needs the edge detail (edge_type + attributes like
+  via="soql", method="run") to show HOW a dependency exists. Returns all
+  parallel MultiDiGraph in-edges; optional edge_type filter.
+- `cli.py`: new `impact <name>` command. Shows what touches a node and how:
+  "via SOQL/DML (SOQL)" for objects, "via method call (isBypassed())" for
+  class calls, "via name reference" for string-scan refs. Dedicated command
+  (not overloaded depends-on) per design decision — keeps depends-on as the
+  clean Apex→Apex dependency story.
+- 6 incoming_edges tests + 4 impact handler tests + parser wiring. 169 total.
+
+### Real-org demo — the Week 7 headline working
+- `impact Opportunity`: EdmcDealLineItemController + OpportunitySelector,
+  both via SOQL. "What breaks if I change Opportunity" answered.
+- `impact TriggerBase`: 30 references. Shows the SAME class with BOTH a
+  method-call edge (isBypassed()) AND a name-reference edge — the parallel
+  edges MultiDiGraph preserves. method-level detail (which method couples the
+  caller) is the parser precision the string-scan alone couldn't give.
+
+### Why a dedicated command (the design decision)
+Chose a separate `impact` command over enriching `depends-on`. Reasoning:
+depends-on answers "what is the blast radius" (Node list, deduped). impact
+answers "how exactly does each thing touch this" (Edge list, typed, with
+method/via detail). Different questions, different return shapes. Overloading
+one command to do both would muddy the clean Node-list semantics of
+depends-on. The edge-detail need is also why incoming_edges had to return
+Edges, not Nodes — the first query in the engine to do so.
+
+### Python learning
+- **MultiDiGraph in_edges signature.** `g.in_edges(node, keys=True, data=True)`
+  yields 4-tuples `(src, tgt, key, data)`. Forgetting keys=True on a
+  MultiDiGraph silently merges parallel edges in some networkx calls — keys=True
+  makes each parallel edge distinct. The key is the integer networkx assigns to
+  disambiguate parallel edges.
+- **Returning edges vs nodes — an API shape decision.** Every existing query
+  returned `list[Node]`. incoming_edges breaks that pattern by returning
+  `list[Edge]` because the caller needs the relationship metadata, not just the
+  endpoints. The lesson: let the consumer's actual need drive the return type,
+  don't force a new query into an existing shape that drops the data it needs.
+
+### What's next — Day 5
+Per ROADMAP, Day 5 is the Flow analyzer — flagged as FIRST TRIM CANDIDATE if
+the week is running hot. Decision point: we're on Day 4 and the field-impact
+headline is DONE and demoable. Evaluate at start of Day 5 whether Flow analysis
+earns the time or slips to Week 8 (its prerequisite — Flow metadata extraction
+— isn't even built yet).
 ---
