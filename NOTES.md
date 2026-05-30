@@ -1337,4 +1337,135 @@ inability to tell signal from noise.
 - Add .gitattributes at repo root to normalize line endings (LF in repo,
   platform default in working copy). Stops the "LF will be replaced by CRLF"
   warnings. Quick setup at start of Week 6.
+
+---
+
+## Week 6 Day 1 — Graph data model
+
+### What shipped
+- `app/intelligence/graph/models.py` — the typed vocabulary for the whole
+  graph system. Three things: `NodeType`/`EdgeType` enums, `Node`/`Edge`
+  Pydantic models, and `MetadataGraph` (a wrapper around networkx.DiGraph).
+- `GraphStats` model for snapshot statistics (node/edge counts by type).
+- 16 unit tests (`tests/unit/test_graph_models.py`), all green. Full suite
+  now 60 (44 prior + 16).
+- Added `networkx>=3.0` to requirements.txt. Installed networkx 3.6.1.
+
+### The scoping decision (the interview story for this day)
+ROADMAP Week 6 Day 1-2 called for defining 7 node types (Object, Field,
+ApexClass, Trigger, Flow, ValidationRule, PermissionSet) and 6 edge types.
+Reconciled that against reality before building: the cache holds exactly 2
+metadata types — ApexClass and ApexTrigger. You cannot populate Object,
+Field, Flow, or ValidationRule nodes because that data was never extracted.
+
+Decision: model what you can populate. The enums list all 7 node types and
+all 6 edge types as *stub values* (an enum value costs nothing and documents
+intent), but only ApexClass/ApexTrigger nodes and REFERENCES edges get real
+builder/query/test code this week. The other types arrive when their data
+does — Object/Field in Week 7 (Apex parser extracts field refs), Flow/
+ValidationRule in Week 8.
+
+The principle: **building models for node types you can't populate is
+speculative engineering.** The builder would have untestable branches, the
+query layer would have unreachable paths, and the graph would *look*
+complete while being structurally hollow. A graph with 2 well-populated node
+types is more useful — and more honest — than one with 7 half-populated ones.
+This is the same "ship the useful 80% with named limitations" stance as
+ADR-006, applied to data modelling instead of matching.
+
+### Judgment call: what was and wasn't ADR-worthy
+ADR-008 (MetadataGraph wraps networkx) IS ADR-worthy — a real interface
+decision with a genuine trade-off (type safety vs indirection) and a
+non-obvious correct answer. The scoping-to-2-types decision is borderline:
+documented it here in the journal rather than as a standalone ADR, because
+it's an application of an existing principle (ADR-006's stance) to a new
+situation, not a fresh architectural choice. If it comes up in an interview
+it's a "scope discipline" story, not an "architecture" story.
+
+### Python learning notes
+- **`str, Enum` mixin.** `class NodeType(str, Enum)` makes each member behave
+  as a real string — `NodeType.APEX_CLASS == "ApexClass"` is True, and it
+  serializes straight to JSON without a custom encoder. A plain `Enum` member
+  is NOT equal to its value and needs `.value` everywhere. The str-mixin is
+  the Pythonic default when an enum's values are strings that cross a
+  serialization boundary (JSON, networkx node attrs, REST responses).
+- **Wrapper over inheritance.** First instinct (Apex habit) was to subclass
+  `nx.DiGraph`. The Pythonic choice here is composition — `MetadataGraph`
+  *has* a DiGraph (`self._g`), it isn't one. Subclassing would expose
+  networkx's entire untyped API surface as public, which is the opposite of
+  what ADR-008 wants. "Prefer composition over inheritance" lands concretely
+  here: I want to expose 6 typed methods, not 80 untyped ones.
+- **`_` prefix as a contract, not enforcement.** `MetadataGraph._graph` is a
+  property prefixed with `_` to signal "internal — query layer only." Python
+  has no real `private`; the underscore is a convention other developers
+  honor. Coming from Apex's `private` keyword this felt flimsy at first, but
+  it's the actual Python norm.
+
+### What surprised me
+- **networkx stores node/edge data as plain dicts.** `g.add_node(id, **attrs)`
+  just splats keyword args into a dict hanging off the node. No schema, no
+  validation — which is exactly why ADR-008 wraps it. The typing has to live
+  in my layer because networkx provides none.
+- **Python 3.14.** Local interpreter is 3.14.4, but the ROADMAP/README claim
+  "3.11+". Nothing in models.py uses 3.14-only syntax (the `X | None` unions
+  and `list[int]` generics are all 3.10+), so I'm safe across the stated
+  range. Flagged a parked item below.
+
+### Scope I noticed but parked
+- **OSS support matrix.** Running on 3.14 locally, but claiming 3.11+ support.
+  Before the open-source MCP server launch, CI needs to test against 3.11,
+  3.12, 3.13 — a library can pass on 3.14 and break on 3.11 if newer-only
+  syntax slips in. Pre-launch / Phase 2 concern, not now. Noting it so it
+  isn't lost.
+
+### What's next (Day 2)
+Graph builder — `app/intelligence/graph/builder.py`. Read the cache, run the
+reference analyzer internally against the real org's 42 classes + 1 trigger,
+and turn the string-scan hits into actual REFERENCES edges between nodes.
+First time the graph holds real data instead of test fixtures.
+
+---
+
+## ADR-008 — MetadataGraph wraps networkx.DiGraph
+
+**Status:** Accepted
+**Date:** Week 6, Day 1
+
+**Decision:** `MetadataGraph` is a typed wrapper class. Callers interact with
+`Node`/`Edge` Pydantic models; the underlying `nx.DiGraph` is an
+implementation detail, exposed only via a `_graph` escape hatch for the query
+layer's algorithm needs (shortest_path, etc.).
+
+**Alternatives considered:**
+- **Expose `nx.DiGraph` directly** — callers call `G.successors()` and read
+  node data as raw dicts. Simplest, zero indirection.
+- **Subclass `nx.DiGraph`** — `MetadataGraph(nx.DiGraph)`. Inherits the full
+  API, can add typed methods on top.
+- **Pure-Pydantic adjacency structure** — no networkx; a `dict[str, list[str]]`
+  adjacency map plus a node lookup dict.
+
+**Trade-offs:**
+- ✅ Type safety — no `node["node_type"]` string lookups leaking into the
+  query or REST layers; IDE autocomplete works end to end.
+- ✅ Swap-safe — if networkx is ever replaced (DB-backed graph in Phase 2),
+  callers don't change; only the wrapper internals do.
+- ✅ Testable in isolation — MetadataGraph unit tests need no running server.
+- ❌ Indirection cost — `g.add_node(node)` instead of `G.add_node(id, **data)`.
+- ❌ The `_graph` escape hatch is a mild design smell: the query layer gets
+  privileged access to internals. Accepted because reimplementing networkx's
+  graph algorithms in my own layer would be far worse.
+
+**Why this over raw networkx:** The untyped dict API is fine for exploratory
+graph scripting. It's a liability when building a typed REST API on top —
+every layer has to know the internal dict shape and there's no compiler help.
+The wrapper pays for itself at the first `/graph/` endpoint.
+
+**Why composition over subclassing:** Subclassing `nx.DiGraph` would expose
+its entire ~80-method untyped surface as public API. The whole point is to
+expose ~6 typed methods. Composition (`MetadataGraph` *has* a DiGraph) hides
+what shouldn't be public; inheritance can't.
+
+**Why not pure-Pydantic:** networkx gives shortest-path, connected-components,
+and cycle detection for free. Reimplementing those in adjacency-dict logic is
+Phase 2 pain with no Phase 1 payoff.
 ---
