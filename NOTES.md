@@ -2502,4 +2502,39 @@ added inline as each capability is built — not deferred to Week 14.
 ### Tests
 - No new tests (apex prompt + wrapper covered by Day-1 tests: build_apex_prompt
   assertions + registry contract + default_mode override). Suite 296.
+
+## Week 9 Day 3 — Capability 3: SOQL generation
+
+### What shipped
+- soql mode live-verified. "Write SOQL for Opportunities closed this quarter
+  with amount and stage" → Claude ran find_references_to(Opportunity) →
+  get_source(OpportunitySelector), read REAL SOQL, and grounded fields in it.
+- THE HONESTY HELD: per-field provenance table distinguished grounded fields
+  (Id/Name/StageName/Amount — "confirmed in OpportunitySelector") from
+  platform-knowledge fields (CloseDate — "standard Salesforce field") from
+  uncertain ones (Account.Name — "verify if needed"). The verify caveat fired.
+- Grounding confirmed genuine: `cli find Opportunity` shows OpportunitySelector
+  is a real ApexClass. Claude did not hallucinate the grounding source.
+- `app/interfaces/ask_soql.py` — wrapper, main(default_mode="soql"). Verified
+  via --help + import; no extra live call.
+
+### The precise scope boundary (interview-ready honesty, ADR-010)
+soql mode grounds CUSTOM/QUERIED fields in real source (the differentiator).
+But STANDARD fields (CloseDate, IsWon, IsClosed) rest on Claude's platform
+priors, NOT org verification — the graph has no field nodes, so there's no way
+to verify a standard field against THIS org. Safe for genuinely-universal fields;
+the gap would show on a field Claude believes is standard but that's custom/
+renamed in a given org. Honest answer to "how do you know CloseDate exists in
+their org?" → "we don't verify standard fields; that's the FIELD-node gap."
+Documentation item, not a prompt fix — the output was correct.
+
+### Cost & Option-B watch
+- $0.037 — between qa ($0.024) and apex ($0.088), as predicted. One source read.
+- NO warm-up over-fetch. soql's find_by_name calls are PROMPT-DIRECTED (step 1
+  "confirm the Object exists"), not wasteful warm-ups. Over-fetch count stays 2.
+- Note: soql's find_by_name can't be read as Option-B evidence either way —
+  the prompt induces it. apex/qa warm-ups remain the clean signal.
+
+### Tests
+- No new tests (soql prompt + wrapper covered by Day-1 tests). Suite 296.
 ---
