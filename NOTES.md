@@ -2385,4 +2385,59 @@ org scale makes find_by_name discovery expensive, OR (c) Day-6+ tool-call logs
 show Claude repeatedly making the same discovery calls that a names-index or
 1-hop pre-load would eliminate. At that point Option B is decided with data,
 and context/retrieval.py + compression.py earn their package.
+
+---
+
+## Week 8 Day 6 — First end-to-end live call (ask CLI)
+
+### What shipped
+- `app/interfaces/ask_cli.py` — the first AI surface. Wires build_system_prompt
+  + build_tools + ClaudeClient into one command:
+  `python -m app.interfaces.ask_cli "question"`. Streams the answer; announces
+  each tool call on stderr (observability for ADR-014); reports token cost via
+  SessionUsage. Separate entry point from cli.py on purpose — deterministic
+  graph CLI vs probabilistic AI CLI (different cost/output/failure models).
+- `tests/unit/test_ask_cli.py` — 7 hermetic tests (parser + _announce wrapper;
+  the live call is verified manually, not unit-tested). Suite 268 → 275.
+- Explicit load_dotenv() at module top — don't rely on auth.py's incidental load.
+
+### Setup gotcha (worth a line for future-me / cloners)
+First live call failed with "Could not resolve authentication method." Cause:
+.env.example ships ANTHROPIC_API_KEY commented out, so it was never set.
+Fix: real key from console.anthropic.com, uncommented in .env, + $5 prepaid
+usage credits (API billing is separate from any Claude.ai subscription).
+Diagnostic one-liner to confirm the key loads:
+  python -c "from dotenv import load_dotenv; import os; load_dotenv(); print('FOUND' if os.environ.get('ANTHROPIC_API_KEY') else 'MISSING')"
+
+### The payoff — Claude narrated the metadata-graph thesis live
+Asked "PricingFlowAction looks never-referenced by Apex — how does it ever get
+invoked?" Claude called find_references_to + find_dependencies + analyze_impact
+(parallel), found the Flow-action edge, and explained: PricingFlowAction is a
+Flow-invocable @InvocableMethod wired by Opportunity_Sales_Orchestration_Flow —
+a metadata wire, not a code call — so it looks dead to an Apex scan but isn't.
+It even added the developer-pain insight: deleting/renaming it would break the
+Flow action step silently at runtime. The Week-7 payoff, now narrated by Claude
+through the tools, from natural language. Cost ~$0.024/query (Sonnet 4.6).
+
+### Tool-selection observations (ADR-014 data — A1 vs Option B)
+- Direction distinction HELD: for "how is it invoked", Claude correctly chose
+  find_references_to (inward), not find_dependencies. Day-2 descriptions work.
+- OVER-FETCH signal (log it): on the simple "what does X depend on" query,
+  Claude did find_by_name (discovery) THEN find_dependencies, though the name
+  was exact. One instance, not yet a pattern. If Claude routinely warms up with
+  find_by_name, that's the evidence ADR-014 trigger (c) names for revisiting
+  Option B (a names-index would remove the round-trip). Watching.
+- find_dependencies returns node names only (no edge label), so Claude hedged
+  dependencies as "likely SOQL" rather than stating the mechanism. analyze_impact
+  has the label; find_dependencies doesn't. Refinement candidate (add edge label
+  to find_dependencies output) — PARKED, not a Week-8 deliverable; the hedge is
+  honest, not wrong.
+
+### Cost tracking is real
+SessionUsage printed $0.0247 / $0.0235 per query. Cross-check against the
+console Usage page (settings → Usage) — app-layer estimate should match
+provider billing within rounding. $5 credits ≈ ~200 queries at this shape.
+
+### Test count
+Suite 275. Reconcile running count in ROADMAP at week's end.
 ---
