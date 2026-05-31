@@ -2286,4 +2286,103 @@ blocker), but now evidenced by real data, not theory.
 
 ### Test count
 Suite 260. Running reconciliation deferred to ROADMAP at week's end.
+
+---
+
+## Week 8 Day 5 — Tool-pull system-prompt builder
+
+### What shipped
+- `app/intelligence/orchestration/system_prompt.py` — `build_system_prompt(graph)`
+  assembles Claude's standing context for the tool-pull model: role, live
+  orientation (component counts by type, relationship counts by type), edge
+  semantics, how-to-reason guidance, and a KNOWN LIMITATIONS block. Orientation,
+  not data — every specific name/dependency/source comes through a tool call.
+- `tests/unit/test_system_prompt.py` — 8 tests: counts, type/edge breakdowns,
+  edge semantics, the find_dependencies/find_references_to direction guidance,
+  the limitations block (incl. the recordLookups gap), tool-use-over-guessing,
+  and empty-graph handling. Suite 260 → 268.
+- Verified live against the real org (throwaway script, removed): prints the
+  actual 57-component / 172-relationship snapshot with the 43 ApexClass /
+  8 Object / 6 Flow / 1 ApexTrigger breakdown and the limitations block.
+
+### Why this is thin (A1, not A2)
+Chose minimal-seed (A1) over seed-plus-names-index (A2). The whole tool-pull
+bet is that Claude pulls what it needs; pre-loading even a names list is the
+first step down the Option-B slope and should be a deliberate, data-driven
+decision, not smuggled into the system prompt. At this org's scale a discovery
+round-trip is cheap. Day 6's live run will show Claude's actual tool-call
+patterns — that data decides whether a names-index ever earns its tokens.
+
+### Honest-by-design: the limitations block
+The prompt tells Claude what the graph does NOT capture — no fields, objects
+tracked at object (not field) grain, and Flow record operations
+(recordLookups/Creates/Updates) not edged. This is the Day-3 real-org finding
+turned into a guardrail: Claude is instructed not to claim completeness the
+graph doesn't have. Cheaper to prevent overclaiming in the prompt than to
+detect it after.
+
+### Structural decision (see ADR-014)
+ROADMAP located this at intelligence/context/retrieval.py alongside planned
+compression.py/templates.py — but that package encodes the pre-loaded (Option
+B) framing. Under tool-pull there is no retrieval and nothing to compress, so
+the file is a system-prompt builder in orchestration/, and the context/ package
+is deferred to if/when Option B lands. Folder structure reflects the model we
+actually chose, not the one we deferred.
+
+### Test count
+Suite 268. Running reconciliation deferred to ROADMAP at week's end.
+
+## ADR-014 — Tool-pull orchestration over pre-loaded context (Option A)
+
+**Status:** Accepted
+**Date:** Week 8 (decided Day 2, became load-bearing Day 5)
+
+**Decision:** Claude reasons over the metadata graph by PULLING specifics
+through tools. It receives only a thin standing system prompt — role, a
+high-level orientation (counts by node/edge type), edge semantics, reasoning
+guidance, and the graph's known limitations. Every specific component name,
+dependency, and source line comes through a tool call, never the system prompt.
+
+**Alternatives considered:**
+- **Option B — pre-loaded context.** Given a user query, a retrieval step
+  selects the likely-relevant nodes (e.g. find_by_name + 1-hop neighbours),
+  a compression step trims large source, and the result is packed into the
+  system prompt up front. Claude uses tools only for follow-up. This is the
+  intelligence/context/ package the ROADMAP planned (retrieval.py +
+  compression.py + templates.py).
+- **A2 — tool-pull plus a thin names index.** Option A, but seed the prompt
+  with a names-only list of all components so Claude knows what exists without
+  a discovery round-trip.
+
+**Trade-offs:**
+- ✅ Tool-pull is simpler — no retrieval heuristic to tune, no compression
+  strategy, no relevance scoring. None of those modules need to exist yet.
+- ✅ Lowest system-prompt token cost — orientation only, no contents.
+- ✅ Lets us OBSERVE Claude's real tool-call patterns (Day 6) before building a
+  retrieval heuristic. You cannot tune pre-loading well without first seeing
+  what Claude actually reaches for; tool-pull generates exactly that data.
+- ✅ No premature structure — the context/ package isn't created for a model
+  we deferred (same discipline as Week 6 Day 1's "model what you can populate").
+- ❌ Extra round-trips — Claude may call a tool to discover something that
+  pre-loading could have handed it. At current org scale this is cheap; at
+  large-org scale it may not be (revisit trigger below).
+- ❌ A2 would save a discovery round-trip, but a names index is the first step
+  toward pre-loading and should be a deliberate Option-B decision, not a
+  default. Rejected for now.
+
+**Why this over Option B:** We have no latency SLA, no token-pressure data, and
+no observed tool-call patterns yet. Pre-loading requires a good retrieval
+heuristic, which can't be tuned without that data. Build the simple, honest
+thing first; let real usage tell us whether pre-loading earns its complexity.
+
+**Structural consequence:** No intelligence/context/ package. The orientation
+builder lives in orchestration/system_prompt.py. retrieval.py / compression.py /
+templates.py are deferred to Option B.
+
+**Option B revival trigger (breadcrumb):** Revisit when EITHER (a) measured
+per-query latency from discovery round-trips becomes a real cost, OR (b) the
+org scale makes find_by_name discovery expensive, OR (c) Day-6+ tool-call logs
+show Claude repeatedly making the same discovery calls that a names-index or
+1-hop pre-load would eliminate. At that point Option B is decided with data,
+and context/retrieval.py + compression.py earn their package.
 ---
