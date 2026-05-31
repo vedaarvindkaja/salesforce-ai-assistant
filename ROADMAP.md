@@ -627,45 +627,100 @@ start — the +29 predate this week's work; reconcile the running total via
 `git log` (see Week 8 Day 2 NOTES).
 
 ---
+## Week 9 — The MVP Capabilities (COMPLETE, rescoped 5→4)
 
-#### Week 9 — The 5 MVP capabilities (20 hours)
+### Outcome vs plan
+Plan: build 5 developer-facing capabilities on the Week-8 orchestration layer.
+Delivered: 4 capabilities, each proven live against the real org, each with a
+clean portfolio entry-point wrapper. Capability 5 (debug log) PARKED by explicit
+Day-1 decision — its honest version (parser + analyze_debug_log tool correlating
+log events to graph nodes) is 2-3 days and doesn't fit Week-15 pressure; its
+descoped version (paste-and-ask) doesn't exercise the metadata graph, so it's
+portfolio-thin. Four graph-exercising capabilities > five where one is hollow.
 
-**Goal:** Build all 5 capabilities, each as a coherent flow.
+### The real engineering (what the week actually was)
+Not "wrote four system prompts." The week was: (1) a capability-routing
+ARCHITECTURE (mode-dispatch) that made capabilities 2-4 cheap to add, and (2) a
+deterministic-audit FINDING that surfaced where the AI over-narrates and what to
+fix in Week 10. The capabilities were mostly prompt + 3-line wrapper over the
+proven Week-8 layer — which is precisely what Day-1 triage predicted.
 
-**Day 1 (4 hours)** — Capability 1: Metadata Q&A
-- Prompt template
-- Tool orchestration flow
-- Format response with citations
+### What shipped, by day
+- Day 1 — Mode-dispatch core. ask_cli.py gained --mode + CAPABILITY_REGISTRY
+  (mode → (prompt_builder, tool_subset)); tool-subsetting owned by ask_cli, not
+  build_tools (factory stays pure). 3 capability prompt builders (apex/soql/
+  impact) on a shared _shared_orientation. Chose mode-dispatch over a
+  capabilities.py abstraction (premature for a 3-tuple). Test reconciliation:
+  275 baseline confirmed, 201→230 Week-7 gap explained via git log. 21 new tests.
+- Day 2 — Capability 2 (Apex explanation/refactoring). Live-verified: graph-
+  grounded explanation, flagged TriggerDispatcher as DEAD CODE (zero inbound
+  refs — graph-only insight), self-discovered the org's 2nd trigger framework.
+  ask_apex.py. Costliest capability ($0.088, source-heavy).
+- Day 3 — Capability 3 (SOQL generation). Live-verified: per-field provenance
+  held (grounded fields vs platform-prior fields vs verify-caveat fields).
+  Grounding confirmed genuine (OpportunitySelector is real). ask_soql.py.
+  Documented the field boundary (ADR-010): custom/queried fields grounded in
+  source; standard fields rest on platform priors, NOT org verification.
+- Day 4 — Capability 4 (deployment impact). Live-verified: all 5 structured
+  sections, correct HIGH rating, Flow-vs-Apex insight reproduced generatively.
+  get_source-free exclusion held. Cheapest non-qa capability ($0.0298).
+  ask_impact.py.
 
-**Day 2 (4 hours)** — Capability 2: Apex explanation/refactoring
-- Two sub-flows: explain vs refactor
-- Pull relevant metadata for context
-- Format output with code blocks + explanation
+### Entry-point wrappers (Day-1 amendment, delivered inline not deferred)
+ask_apex.py / ask_soql.py / ask_impact.py — 3-line wrappers, main(default_mode=).
+Built inline with each capability per the Week-8 review amendment (portfolio
+insurance against Week-14 crunch), NOT deferred to Week 14. qa keeps the bare
+ask_cli entry. Clean portfolio surface: `python -m app.interfaces.ask_impact "..."`.
 
-**Day 3 (4 hours)** — Capability 3: SOQL generation
-- Take natural language + org context
-- Generate SOQL that uses actual field names
-- Validate SOQL syntax before returning
-- Optional: dry-run against describe metadata
+### Capability 1 (Metadata Q&A) — status
+Structurally complete since Week 8. One-shot Q&A for Phase 1. Multi-turn /
+session state explicitly parked to Week 13+ (decided Day 1; do not half-build
+session state mid-stream).
 
-**Day 4 (4 hours)** — Capability 4: Deployment impact analysis
-- Input: list of metadata components or change set XML
-- Trace dependencies through graph
-- Format risk assessment with severity levels
+### THE FINDING (Day 4) — deterministic CLI audits the probabilistic AI
+Ran cli.py as ground truth against impact-mode's PricingFlowAction analysis:
+every NODE and EDGE Claude named was real (DIRECT, RELIES ON, TRANSITIVE all
+verified against deterministic queries). The skeleton is exact. What over-ran
+the graph was the interpretive PROSE — "core pricing logic" (never read it),
+"if its query interface changes" (inferred mechanism). For a DEPLOYMENT tool
+this is the riskiest place to over-narrate. The cli.py/ask_cli split (ADR-001,
+deterministic vs probabilistic) proved its worth: the deterministic surface can
+AUDIT the AI's claims. Architecture feature, not AI bug.
 
-**Day 5 (3 hours)** — Capability 5: Debug log analysis
-- Parse debug log structure
-- Identify error stack traces
-- Cross-reference against Apex source
-- Format root cause analysis
+### Carried into Week 10 (NEW this week)
+- COUPLED FIX (do in order): Refinement #10 (add edge labels to
+  find_dependencies output) is now LOAD-BEARING, not optional — Claude
+  over-narrates mechanism partly BECAUSE find_dependencies strips the via-label.
+  ORDER: do #10 first, re-run the PricingFlowAction impact query, check if
+  over-narration self-corrects, THEN tighten the impact prompt only for what
+  remains. Do not band-aid the prompt before fixing the data.
 
-**Day 6-7 (1 hour)** — Commit, push, plan Week 10
+### Carried forward (unchanged from Week 8)
+- Capability 5 (debug log) — parked, revisit Week 12 (build real version if
+  slack exists, else four capabilities stands).
+- Flow record-operation edges (recordLookups→Object) — still parked.
+- FIELD nodes (ADR-010) — Phase 2; the SOQL field boundary is the live evidence.
+- REST /graph/ route — Week 13. Graph persistence — Phase 2. ANTLR AST — Phase 2.
+- Per-capability model routing (Sonnet vs Opus) — Phase 2 idea.
 
-**Deliverables:**
-- ✅ All 5 capabilities working end-to-end via CLI
-- ✅ Each capability has at least 5 manual test cases passing
-- ✅ Performance: each query completes in <30s
-- ✅ Cost per query tracked
+### Option-B (ADR-014) decision status — still tool-pull, watching
+Over-fetch warm-up count stays at 2 (apex + qa, on exact names). Key Week-9
+insight: 3 of 4 capability prompts induce find_by_name in step 1 BY DESIGN, so
+find_by_name-then-act is mostly designed behavior across the MVP — the warm-up
+signal is now harder to isolate, which is itself Option-B-relevant. Cost data
+banked: qa ~$0.024, soql $0.037, impact $0.030, apex $0.088 (apex costliest;
+cost is SOURCE-READING not discovery, so pre-loading wouldn't help apex). No
+revival trigger met. Tool-pull holds into Week 10.
+
+### Tests
+296 passing (275 Week-8 baseline + 21 Day-1). Days 2-4 added no tests
+(capabilities covered by Day-1 prompt/registry tests + manual live verification;
+live API calls are not unit-tested by design — cost + non-determinism).
+
+### Cost ledger
+~$0.18 total across Week-9 live verification runs (4 capability tests + a couple
+of re-runs). $5 prepaid credit; comfortable margin. apex is the budget watch-item
+at $0.088/query.
 
 ---
 
