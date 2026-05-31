@@ -538,51 +538,93 @@ metadata_api/flow_parser).
 
 #### Week 8 — Orchestration layer (15 hours)
 
-**Goal:** Make the graph queryable through Claude. Graph is richer than the
-original Week-8 assumption — it now has Apex, Object, and Flow nodes with
-REFERENCES/CALLS/USES_OBJECT edges (Week 7), so the orchestration layer reasons
-over a real metadata graph from day one.
+#### Week 8 — Orchestration layer (15 hours) ✅ — completed, ~13h
 
-**Carried in from Week 7 (do at week start if appetite, else keep parked):**
-- Flow record-operation edges (recordLookups/Creates/Updates → Object/Field).
-  Real dependency the graph currently misses; the Flow analog of Apex SOQL/DML
-  extraction. NOT a blocker for orchestration — pull in only if Week 8 has slack.
+**Goal (as planned):** Make the graph queryable through Claude — Claude client,
+tool definitions, context builder, first end-to-end example.
 
-**Day 1-2 (5 hours)** — Claude client setup
-- `intelligence/orchestration/claude_client.py`
-- Anthropic SDK integration
-- Streaming support
-- Token counting and cost tracking
-- Error handling and retries
+**What actually shipped (reconciled):** All of it, plus the week reshaped once
+the Day-1 reconciliation confirmed the tools were mostly thin wrappers over the
+already-built QueryEngine. The freed time went where the plan under-budgeted:
+a shared naming module (so CLI and tools describe edges identically) and a
+proper architectural decision on context strategy (tool-pull vs pre-loaded).
+The planned "context builder + compression" became a thin tool-pull system-
+prompt builder; retrieval/compression machinery was deliberately deferred with
+the pre-loaded model (Option B). The graph was richer than the original Week-8
+assumption (Apex + Object + Flow already live from Week 7), so orchestration
+reasoned over a real metadata graph from day one.
 
-**Day 3-4 (5 hours)** — Tool definitions
-- `intelligence/orchestration/tool_definitions.py`
-- Define tools Claude can call:
-  - `query_metadata_graph(query: str)`
-  - `get_object_definition(object_name: str)`
-  - `get_apex_source(class_name: str)`
-  - `find_dependencies(metadata_id: str)`
-  - `find_references_to(metadata_id: str)`
-  - `get_flow_definition(flow_name: str)`
+**Day 1** — Claude client ✅
+- `intelligence/orchestration/claude_client.py` — async AsyncAnthropic wrapper;
+  streaming via messages.stream(); agentic tool loop (stream → tool_use →
+  dispatch concurrently → feed back → repeat); SessionUsage cost tracking;
+  max_iterations guard. Model: claude-sonnet-4-6. Smoke-tested, not yet live.
 
-**Day 5 (3 hours)** — Context window builder
-- `intelligence/context/retrieval.py`
-- Given a user query, retrieve relevant metadata
-- Token-efficient packing (don't send the entire org)
-- `intelligence/context/compression.py`
-- Strategies: summarize large objects, link related items
+**Day 2** — Shared naming module + graph-query tools ✅
+- `intelligence/graph/naming.py` — resolve_one/fmt_node/edge labels extracted
+  from cli.py so CLI and tools are single-sourced (ADR-013). cli.py refactored
+  to import from it (behavior-preserving, aliases keep test paths).
+- `intelligence/orchestration/tool_definitions.py` — 5 graph-query tools
+  (find_dependencies, find_references_to, analyze_impact, find_by_name,
+  graph_health) as thin async wrappers over QueryEngine; build_tools() factory
+  → (schemas, handler_map). Lightly-structured text returns (tool-pull).
+- 21 hermetic tests incl. a direction guard (dependencies/references can't be
+  silently inverted).
 
-**Day 6-7 (2 hours)** — First end-to-end test
-- CLI command: ask a question, get an answer
-- Use real org metadata + Claude
-- Verify tool use works correctly
-- Commit, push, plan Week 9
+**Day 3** — get_source content-retrieval tool ✅
+- 6th tool: raw Apex Body (class/trigger, by record_id) or Flow XML (by
+  DeveloperName, since Flow node ids are synthetic). Object → "no source"
+  (derived, ADR-010). 12k-char truncation guardrail. cache/org_key now optional
+  on build_tools (get_source only when present). One tool, not the planned two
+  (asymmetry hidden behind one tool; tool-shape choice, not ADR-worthy).
+- Tests 21 → 30. Live-verified: pulled real PricingFlowAction Apex + the full
+  Opportunity_Sales_Orchestration_Flow XML through the tool.
 
-**Deliverables:**
-- ✅ Claude calling tools to query the metadata graph
-- ✅ Context builder packing relevant metadata efficiently
-- ✅ First working end-to-end example
-- ✅ Cost tracking infrastructure in place
+**Day 5** — Tool-pull system-prompt builder ✅
+- `intelligence/orchestration/system_prompt.py` — build_system_prompt(graph):
+  role + live orientation (counts by node/edge type) + edge semantics + how-to-
+  reason + a KNOWN LIMITATIONS block (no fields, object-grain only, Flow record
+  operations not edged). Orientation, not data — every specific comes via a tool.
+- ADR-014: tool-pull (Option A) over pre-loaded context (Option B). Structural
+  consequence: no intelligence/context/ package; builder lives in orchestration/;
+  retrieval.py/compression.py deferred to Option B with an explicit revival
+  trigger. 8 tests.
+
+**Day 6** — First end-to-end live call ✅
+- `app/interfaces/ask_cli.py` — separate AI entry point (vs the deterministic
+  cli.py): wires system prompt + tools + client; streams the answer; announces
+  tool calls on stderr (ADR-014 observability); reports cost. 7 tests (parser +
+  wrapper; live call verified manually).
+- THE PAYOFF, narrated live: asked how PricingFlowAction is invoked despite
+  looking never-referenced — Claude called find_references_to + find_dependencies
+  + analyze_impact, found the Flow-action edge, and explained the metadata-wire-
+  vs-code-call distinction (+ "deleting it breaks the Flow step silently at
+  runtime"). The Week-7 thesis, answered by Claude from natural language.
+  ~$0.024/query (Sonnet 4.6).
+
+**Deliverables (honest checks):**
+- ✅ Claude client — streaming, agentic tool loop, cost tracking
+- ✅ Six tools (5 graph-query + get_source), all hermetically tested + live-verified
+- ✅ Tool-pull system-prompt builder (orientation, not data)
+- ✅ First working end-to-end example (ask CLI, real org + Claude)
+- ✅ Cost tracking infrastructure — SessionUsage; ~$0.024/query measured
+- ◻ "Context builder + compression" (planned Day 5) → became a thin system-prompt
+  builder; retrieval/compression are Option-B machinery, deliberately deferred
+- ⬜ Flow record-operation edges (carried from Week 7) — STILL parked, now with
+  Day-3 real-org evidence (the orchestration flow's recordLookups on Opportunity
+  is a real dependency the graph misses). Not a Week-8 blocker
+- ⬜ Per-capability model routing (Sonnet vs Opus by task) — noted as Phase-2 idea
+- ⬜ Pre-loaded context / names-index (Option B) — deferred; revival trigger in
+  ADR-014. Day-6 showed one over-fetch (find_by_name warm-up on an exact name) —
+  watching for a pattern across Week 9's capabilities
+
+**ADRs this week:** ADR-013 (shared naming module — layering discipline),
+ADR-014 (tool-pull orchestration over pre-loaded context). Full reasoning in NOTES.md.
+
+**Test count:** 230 → 275 (+45 across naming/tools/get_source/system_prompt/ask).
+Note: Week 7 close was recorded as 201, but the suite measured 230 at Week 8
+start — the +29 predate this week's work; reconcile the running total via
+`git log` (see Week 8 Day 2 NOTES).
 
 ---
 
