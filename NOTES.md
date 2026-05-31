@@ -2440,4 +2440,31 @@ provider billing within rounding. $5 credits ≈ ~200 queries at this shape.
 
 ### Test count
 Suite 275. Reconcile running count in ROADMAP at week's end.
+
+
+## Week 9 Day 1
+
+### Test count reconciliation
+Confirmed 275 passing at Week 9 start (matches Week 8 close).
+Gap explanation: Week 7 close was recorded as 201 but suite measured 230 at
+Week 8 start (+29). Git log confirms the delta came from Week 7 Day commits
+(classifier, MultiDiGraph migration, Flow slice, impact command) whose tests
+were not reflected in the recorded close number. No missing or phantom tests —
+the count is clean. Baseline for Week 9: 275.
+
+### Capability scope locked (Week 9)
+1. Metadata Q&A — structurally complete (ask_cli.py). Prompt sharpening only.
+   One-shot Q&A for Phase 1. Multi-turn/session state explicitly parked to Week 13.
+2. Apex explanation/refactoring — new system prompt + mode + entry-point wrapper.
+3. SOQL generation — new system prompt + mode + entry-point wrapper.
+   Honest scope: object/class awareness only; no field validation (FIELD nodes parked ADR-010).
+4. Deployment impact analysis — new system prompt + mode + entry-point wrapper.
+5. Debug log analysis — PARKED. Revisit Week 12.
+   Rationale: descoped version doesn't exercise the graph; real version is 2-3 days.
+   Four solid graph-exercising capabilities is the stronger portfolio story.
+
+### Architecture decision: mode-dispatch
+One shared orchestration surface. ask_cli.py gains a --mode flag (or mode
+parameter). Thin entry-point wrappers (ask_apex.py, ask_soql.py, ask_impact.py)
+added inline as each capability is built — not deferred to Week 14.
 ---

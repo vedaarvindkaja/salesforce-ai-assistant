@@ -1,8 +1,11 @@
-"""Hermetic tests for the ask CLI's pure parts (Week 8 Day 6).
+"""Hermetic tests for the ask CLI's pure parts.
 
-The live API call is verified manually (it costs money and is
-non-deterministic). What IS hermetically testable: the argparse wiring and the
-_announce tool-wrapper. Those are pure and worth guarding.
+Week 8 Day 6: argparse wiring + _announce tool-wrapper.
+Week 9 Day 1: --mode flag + CAPABILITY_REGISTRY (mode-dispatch).
+
+The live API call is verified manually (costs money, non-deterministic).
+What IS hermetically testable: parsing, the registry contract, and the
+tool-subsetting decision (which lives in the registry, not in _ask).
 """
 import pytest
 
@@ -10,7 +13,7 @@ from app.interfaces import ask_cli
 
 
 # ------------------------------------------------------------------
-# Argument parsing
+# Argument parsing — question + quiet (Week 8, unchanged)
 # ------------------------------------------------------------------
 
 def test_parser_question_positional():
@@ -35,7 +38,82 @@ def test_parser_requires_question():
 
 
 # ------------------------------------------------------------------
-# _announce wrapper — preserves behaviour, announces on stderr
+# --mode flag (Week 9)
+# ------------------------------------------------------------------
+
+def test_parser_default_mode_is_qa():
+    args = ask_cli._build_parser().parse_args(["q"])
+    assert args.mode == "qa"
+
+
+def test_parser_accepts_each_valid_mode():
+    for mode in ("qa", "apex", "soql", "impact"):
+        args = ask_cli._build_parser().parse_args(["q", "--mode", mode])
+        assert args.mode == mode
+
+
+def test_parser_mode_short_flag():
+    args = ask_cli._build_parser().parse_args(["q", "-m", "apex"])
+    assert args.mode == "apex"
+
+
+def test_parser_rejects_unknown_mode():
+    with pytest.raises(SystemExit):
+        ask_cli._build_parser().parse_args(["q", "--mode", "garbage"])
+
+
+def test_parser_default_mode_override():
+    # Thin wrappers (ask_apex.py) set their own default via default_mode.
+    args = ask_cli._build_parser(default_mode="apex").parse_args(["q"])
+    assert args.mode == "apex"
+
+
+def test_parser_explicit_mode_beats_default_override():
+    # Even a wrapper's default can be overridden on the command line.
+    args = ask_cli._build_parser(default_mode="apex").parse_args(["q", "-m", "soql"])
+    assert args.mode == "soql"
+
+
+# ------------------------------------------------------------------
+# CAPABILITY_REGISTRY contract (Week 9)
+# ------------------------------------------------------------------
+
+def test_registry_has_all_four_capabilities():
+    assert set(ask_cli.CAPABILITY_REGISTRY) == {"qa", "apex", "soql", "impact"}
+
+
+def test_registry_every_mode_maps_to_builder_and_toolset():
+    for mode, (builder, tools) in ask_cli.CAPABILITY_REGISTRY.items():
+        assert callable(builder), f"{mode} builder must be callable"
+        assert isinstance(tools, set) and tools, f"{mode} must have a non-empty toolset"
+
+
+def test_registry_impact_excludes_get_source():
+    _, impact_tools = ask_cli.CAPABILITY_REGISTRY["impact"]
+    assert "get_source" not in impact_tools
+    # but still has the graph-query tools
+    assert "analyze_impact" in impact_tools
+    assert "find_references_to" in impact_tools
+
+
+def test_registry_non_impact_modes_include_get_source():
+    for mode in ("qa", "apex", "soql"):
+        _, tools = ask_cli.CAPABILITY_REGISTRY[mode]
+        assert "get_source" in tools, f"{mode} should allow get_source"
+
+
+def test_registry_toolsets_are_subsets_of_all_tools():
+    # No mode can name a tool that doesn't exist in the full catalogue.
+    for mode, (_, tools) in ask_cli.CAPABILITY_REGISTRY.items():
+        assert tools <= ask_cli._ALL_TOOLS, f"{mode} names an unknown tool"
+
+
+def test_valid_modes_matches_registry():
+    assert set(ask_cli.VALID_MODES) == set(ask_cli.CAPABILITY_REGISTRY)
+
+
+# ------------------------------------------------------------------
+# _announce wrapper — preserves behaviour, announces on stderr (Week 8)
 # ------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -56,7 +134,6 @@ async def test_announce_prints_to_stderr(capsys):
     wrapped = ask_cli._announce("get_source", fake_handler)
     await wrapped({"name": "PricingFlowAction"})
     captured = capsys.readouterr()
-    # Announcement goes to stderr, not stdout (keeps streamed answer clean).
     assert "[tool] get_source" in captured.err
     assert "PricingFlowAction" in captured.err
     assert captured.out == ""

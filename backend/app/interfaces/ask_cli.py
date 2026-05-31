@@ -1,26 +1,27 @@
 # No direct Apex equivalent — AI Q&A CLI entry point (orchestration plumbing)
-"""Ask-Claude CLI — the first end-to-end surface (ADR-001 interfaces/ layer).
+"""Ask-Claude CLI — mode-dispatched AI surface (ADR-001 interfaces/ layer).
 
-Wires the whole Week-8 stack into one command:
-    build the graph from cache
-      -> build_system_prompt(graph)      (orientation, ADR-014 tool-pull)
-      -> build_tools(engine, graph, cache, org_key)  (the 6 tools)
-      -> ClaudeClient(system_prompt=...)  (streaming agentic loop)
-      -> stream the answer; report token cost.
+Wires the whole orchestration stack into one command, with a --mode flag that
+selects which capability lens Claude applies:
+
+    python -m app.interfaces.ask_cli "question"               # qa (default)
+    python -m app.interfaces.ask_cli --mode apex "question"   # Apex explanation
+    python -m app.interfaces.ask_cli --mode soql "question"   # SOQL generation
+    python -m app.interfaces.ask_cli --mode impact "question" # Deployment impact
+
+Each mode maps to a (system_prompt_builder, tool_name_set) pair in
+CAPABILITY_REGISTRY. The tool subsetting happens here — ask_cli owns the
+decision of what Claude sees per capability; build_tools() stays a pure factory.
 
 Separate from cli.py on purpose: cli.py is the DETERMINISTIC graph-query surface
 (pure, synchronous, free). This is the PROBABILISTIC one — it calls the live
-API, costs money, streams, and can fail with API errors. Different beasts; kept
-as distinct entry points.
+API, costs money, streams, and can fail with API errors.
 
-Usage (from backend/, needs a populated cache + ANTHROPIC_API_KEY in .env):
-    python -m app.interfaces.ask_cli "what depends on the Opportunity object?"
-    python -m app.interfaces.ask_cli "show me the source of PricingFlowAction"
-    python -m app.interfaces.ask_cli "any dead or orphaned components?" --quiet
+Thin entry-point wrappers (ask_apex.py, ask_soql.py, ask_impact.py) call
+main(default_mode=...) so each capability has a clean module name for the
+portfolio, without duplicating any logic here.
 
-Tool calls are announced on stderr (so the streamed answer on stdout stays
-clean) — this is how we watch Claude's tool-call pattern, the data ADR-014's
-Option-B revival trigger depends on. Suppress with --quiet.
+Tool calls are announced on stderr (ADR-014 observability). Suppress with --quiet.
 """
 from __future__ import annotations
 
@@ -35,21 +36,47 @@ from app.intelligence.graph.builder import GraphBuilder
 from app.intelligence.graph.query import QueryEngine
 from app.intelligence.graph.storage import MetadataCache
 from app.intelligence.orchestration.claude_client import ClaudeClient
-from app.intelligence.orchestration.system_prompt import build_system_prompt
+from app.intelligence.orchestration.system_prompt import (
+    build_apex_prompt,
+    build_impact_prompt,
+    build_soql_prompt,
+    build_system_prompt,
+)
 from app.intelligence.orchestration.tool_definitions import build_tools
 from app.salesforce.token_storage import load_tokens
 
-# Load .env explicitly so ANTHROPIC_API_KEY is present before the client is
-# constructed — don't rely on the incidental load_dotenv() in auth.py.
 load_dotenv()
 
 _CACHE_PATH = Path("data") / "metadata_cache.db"
 
+# ------------------------------------------------------------------
+# Tool subsets — what Claude can see per capability mode.
+# impact excludes get_source: topology is sufficient; source reading
+# adds cost with no benefit for blast-radius analysis.
+# ------------------------------------------------------------------
+_ALL_TOOLS = {
+    "find_dependencies", "find_references_to", "analyze_impact",
+    "find_by_name", "graph_health", "get_source",
+}
+_GRAPH_ONLY = _ALL_TOOLS - {"get_source"}
+
+# Registry: mode -> (prompt_builder, allowed_tool_names)
+# Adding a new capability = one new entry here + a new builder in system_prompt.py.
+CAPABILITY_REGISTRY: dict[str, tuple] = {
+    "qa":     (build_system_prompt, _ALL_TOOLS),
+    "apex":   (build_apex_prompt,   _ALL_TOOLS),
+    "soql":   (build_soql_prompt,   _ALL_TOOLS),
+    "impact": (build_impact_prompt, _GRAPH_ONLY),
+}
+
+VALID_MODES = list(CAPABILITY_REGISTRY.keys())
+
+
+# ------------------------------------------------------------------
+# Graph + cache bootstrap
+# ------------------------------------------------------------------
 
 async def _load() -> tuple[QueryEngine, "MetadataGraph", MetadataCache, str]:
-    """Build the graph + return everything the tools need (engine, graph,
-    cache, org_key). Same guard clauses as cli.py's bootstrap; ask additionally
-    needs the cache + org_key for get_source."""
     tokens = load_tokens()
     if tokens is None:
         raise SystemExit(
@@ -71,24 +98,37 @@ async def _load() -> tuple[QueryEngine, "MetadataGraph", MetadataCache, str]:
     return QueryEngine(graph), graph, cache, org_key
 
 
-def _announce(name: str, handler):
-    """Wrap a tool handler so each invocation prints to stderr before running.
+# ------------------------------------------------------------------
+# Tool-call observability (ADR-014)
+# ------------------------------------------------------------------
 
-    Keeps the client generic (it knows nothing about display); the CLI, as the
-    consumer, decides to surface tool activity. stderr keeps the streamed answer
-    on stdout uncluttered.
-    """
+def _announce(name: str, handler):
+    """Wrap a handler so each invocation prints to stderr before running."""
     async def wrapped(inp: dict) -> str:
         print(f"  [tool] {name}({inp})", file=sys.stderr, flush=True)
         return await handler(inp)
-
     return wrapped
 
 
-async def _ask(question: str, *, show_tools: bool = True) -> None:
+# ------------------------------------------------------------------
+# Core ask flow
+# ------------------------------------------------------------------
+
+async def _ask(question: str, *, mode: str = "qa", show_tools: bool = True) -> None:
+    if mode not in CAPABILITY_REGISTRY:
+        raise SystemExit(
+            f"Unknown mode {mode!r}. Valid modes: {', '.join(VALID_MODES)}"
+        )
+
+    prompt_builder, allowed_tools = CAPABILITY_REGISTRY[mode]
     engine, graph, cache, org_key = await _load()
-    system_prompt = build_system_prompt(graph)
-    schemas, handlers = build_tools(engine, graph, cache, org_key)
+
+    system_prompt = prompt_builder(graph)
+    all_schemas, all_handlers = build_tools(engine, graph, cache, org_key)
+
+    # Subset schemas and handlers to what this capability allows.
+    schemas = [s for s in all_schemas if s["name"] in allowed_tools]
+    handlers = {n: h for n, h in all_handlers.items() if n in allowed_tools}
 
     client = ClaudeClient(system_prompt=system_prompt)
     for tool_name, handler in handlers.items():
@@ -97,20 +137,33 @@ async def _ask(question: str, *, show_tools: bool = True) -> None:
             _announce(tool_name, handler) if show_tools else handler,
         )
 
+    if mode != "qa":
+        print(f"  [mode] {mode}", file=sys.stderr, flush=True)
+
     print(f"\nQ: {question}\n")
     async for chunk in client.ask(question, tools=schemas):
         print(chunk, end="", flush=True)
     print("\n")
-    # Cost/usage to stderr so it doesn't mix into the answer if piped.
     print(client.session.summary(), file=sys.stderr)
 
 
-def _build_parser() -> argparse.ArgumentParser:
+# ------------------------------------------------------------------
+# CLI wiring
+# ------------------------------------------------------------------
+
+def _build_parser(default_mode: str = "qa") -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ask",
         description="Ask Claude about your Salesforce org's metadata graph.",
     )
     parser.add_argument("question", help="natural-language question (quote it)")
+    parser.add_argument(
+        "--mode", "-m",
+        choices=VALID_MODES,
+        default=default_mode,
+        help=f"capability mode (default: {default_mode}). "
+             f"Choices: {', '.join(VALID_MODES)}",
+    )
     parser.add_argument(
         "--quiet", "-q", action="store_true",
         help="don't announce which tools Claude calls",
@@ -118,9 +171,11 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> None:
-    args = _build_parser().parse_args()
-    asyncio.run(_ask(args.question, show_tools=not args.quiet))
+def main(default_mode: str = "qa") -> None:
+    """Entry point. default_mode lets thin wrappers (ask_apex.py etc.) set
+    their mode without duplicating any logic."""
+    args = _build_parser(default_mode=default_mode).parse_args()
+    asyncio.run(_ask(args.question, mode=args.mode, show_tools=not args.quiet))
 
 
 if __name__ == "__main__":
