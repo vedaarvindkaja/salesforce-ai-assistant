@@ -5,6 +5,11 @@ Builds the graph from the local cache and answers one dependency question,
 then exits. No server, no HTTP. The graph is rebuilt each run (Option A — no
 persistence); at current scale that's ~0.3 s, imperceptible for a CLI.
 
+Name resolution and edge-label formatting live in intelligence/graph/naming.py
+(ADR-013) so the CLI and the orchestration tool layer describe metadata
+identically. The module-level _resolve_one / _fmt_node aliases below preserve
+the original import paths used by the existing CLI tests.
+
 Examples (from backend/):
     python -m app.interfaces.cli depends-on TriggerActionFlow
     python -m app.interfaces.cli depends-on TriggerActionFlow --transitive
@@ -27,66 +32,24 @@ import asyncio
 from pathlib import Path
 
 from app.intelligence.graph.builder import GraphBuilder
-from app.intelligence.graph.models import EdgeType, MetadataGraph, Node
+from app.intelligence.graph.models import MetadataGraph, Node
+from app.intelligence.graph.naming import (
+    edge_method_detail,
+    edge_relation_label,
+    fmt_node,
+    resolve_one,
+)
 from app.intelligence.graph.query import QueryEngine
 from app.intelligence.graph.storage import MetadataCache
 from app.salesforce.token_storage import load_tokens
 
 _CACHE_PATH = Path("data") / "metadata_cache.db"
 
-# Human-readable labels keyed by the edge's `via` attribute. The `via` is
-# more specific than the edge type — a CALLS edge can be an Apex method call,
-# a Flow invoking Apex, or a Flow calling a subflow. When an edge carries a
-# `via`, it drives the label; otherwise we fall back to _EDGE_LABEL by type.
-_VIA_LABEL: dict[str, str] = {
-    "soql": "SOQL/DML query",
-    "flow_trigger": "Flow trigger",
-    "flow_action": "Flow action",
-    "subflow": "subflow",
-}
-
-# Fallback labels keyed by edge type, for edges with no `via` attribute
-# (Apex→Apex method calls and string-scan REFERENCES).
-_EDGE_LABEL: dict[str, str] = {
-    "USES_OBJECT": "SOQL/DML",
-    "CALLS": "method call",
-    "REFERENCES": "name reference",
-}
-
-
-# ------------------------------------------------------------------
-# Name resolution — turn a human-typed name into a single Node
-# ------------------------------------------------------------------
-
-def _resolve_one(engine: QueryEngine, name: str) -> tuple[Node | None, str | None]:
-    """Resolve a name to exactly one Node. Returns (node, None) on success or
-    (None, error_message) when the name is missing or ambiguous.
-
-    Strategy: exact (case-insensitive) match wins; otherwise a single
-    substring match auto-resolves; otherwise report the ambiguity.
-    """
-    exact = engine.find_by_name(name, exact=True)
-    if len(exact) == 1:
-        return exact[0], None
-    if len(exact) > 1:  # rare for class names, but be explicit
-        names = ", ".join(n.name for n in exact)
-        return None, f"'{name}' matches several nodes exactly: {names}"
-
-    partial = engine.find_by_name(name)
-    if len(partial) == 1:
-        return partial[0], None
-    if not partial:
-        return None, f"No metadata named '{name}'. Try: cli find <partial-name>"
-    shown = ", ".join(n.name for n in partial[:10])
-    more = "" if len(partial) <= 10 else f" (+{len(partial) - 10} more)"
-    return None, (
-        f"'{name}' is ambiguous — matches {len(partial)}: {shown}{more}. "
-        f"Use the exact name."
-    )
-
-
-def _fmt_node(n: Node) -> str:
-    return f"{n.name} ({n.node_type.value})"
+# Backwards-compatible aliases (ADR-013 refactor). The resolution and
+# formatting logic now lives in naming.py; these names keep the original
+# cli._resolve_one / cli._fmt_node import paths working for existing tests.
+_resolve_one = resolve_one
+_fmt_node = fmt_node
 
 
 # ------------------------------------------------------------------
@@ -94,69 +57,62 @@ def _fmt_node(n: Node) -> str:
 # ------------------------------------------------------------------
 
 def _cmd_depends_on(engine: QueryEngine, name: str, *, transitive: bool) -> str:
-    node, err = _resolve_one(engine, name)
+    node, err = resolve_one(engine, name)
     if err:
         return err
     deps = engine.what_depends_on(node.id, transitive=transitive)
     kind = "transitive" if transitive else "direct"
     if not deps:
-        return f"Nothing depends on {_fmt_node(node)}."
-    head = f"{len(deps)} {kind} dependent(s) of {_fmt_node(node)}:"
-    return "\n".join([head, *(f"  {_fmt_node(n)}" for n in deps)])
+        return f"Nothing depends on {fmt_node(node)}."
+    head = f"{len(deps)} {kind} dependent(s) of {fmt_node(node)}:"
+    return "\n".join([head, *(f"  {fmt_node(n)}" for n in deps)])
 
 
 def _cmd_dependencies(engine: QueryEngine, name: str, *, transitive: bool) -> str:
-    node, err = _resolve_one(engine, name)
+    node, err = resolve_one(engine, name)
     if err:
         return err
     deps = engine.what_does_it_depend_on(node.id, transitive=transitive)
     kind = "transitive" if transitive else "direct"
     if not deps:
-        return f"{_fmt_node(node)} depends on nothing (in Apex)."
-    head = f"{_fmt_node(node)} has {len(deps)} {kind} dependenc(ies):"
-    return "\n".join([head, *(f"  {_fmt_node(n)}" for n in deps)])
+        return f"{fmt_node(node)} depends on nothing (in Apex)."
+    head = f"{fmt_node(node)} has {len(deps)} {kind} dependenc(ies):"
+    return "\n".join([head, *(f"  {fmt_node(n)}" for n in deps)])
 
 
 def _cmd_impact(engine: QueryEngine, graph: MetadataGraph, name: str) -> str:
-    """Impact view: which Apex touches this node, and HOW (edge type).
+    """Impact view: which Apex/Flow touches this node, and HOW.
 
     Built for the field-impact demo on Object nodes ('what breaks if I change
     Opportunity'), but works on any node — for a class it shows callers and
-    referencers annotated by relationship type.
+    referencers annotated by relationship type. Edge labels come from
+    naming.edge_relation_label (via-driven), shared with the analyze_impact tool.
     """
-    node, err = _resolve_one(engine, name)
+    node, err = resolve_one(engine, name)
     if err:
         return err
 
     edges = engine.incoming_edges(node.id)
     if not edges:
-        return f"Nothing touches {_fmt_node(node)}."
+        return f"Nothing touches {fmt_node(node)}."
 
-    head = f"Impact of {_fmt_node(node)} — {len(edges)} reference(s) touch it:"
+    head = f"Impact of {fmt_node(node)} — {len(edges)} reference(s) touch it:"
     lines = [head]
     for e in edges:
         src = graph.get_node(e.source_id)
-        src_label = _fmt_node(src) if src else e.source_id
-        via = e.attributes.get("via")
-        # The `via` attribute is more specific than the edge type; prefer it.
-        if via and via in _VIA_LABEL:
-            relation = _VIA_LABEL[via]
-        else:
-            relation = _EDGE_LABEL.get(e.edge_type.value, e.edge_type.value)
-        # Show the method name for Apex→Apex method calls (no `via`, has method).
-        detail = ""
-        if e.edge_type == EdgeType.CALLS and not via and e.attributes.get("method"):
-            detail = f" ({e.attributes['method']}())"
+        src_label = fmt_node(src) if src else e.source_id
+        relation = edge_relation_label(e)
+        detail = edge_method_detail(e)
         lines.append(f"  {src_label}  via {relation}{detail}")
     return "\n".join(lines)
 
 
 def _cmd_path(engine: QueryEngine, graph: MetadataGraph,
               from_name: str, to_name: str) -> str:
-    src, e1 = _resolve_one(engine, from_name)
+    src, e1 = resolve_one(engine, from_name)
     if e1:
         return e1
-    dst, e2 = _resolve_one(engine, to_name)
+    dst, e2 = resolve_one(engine, to_name)
     if e2:
         return e2
     edges = engine.find_path(src.id, dst.id)
@@ -182,7 +138,7 @@ def _cmd_find(engine: QueryEngine, name: str) -> str:
     if not matches:
         return f"No metadata matching '{name}'."
     head = f"{len(matches)} match(es) for '{name}':"
-    return "\n".join([head, *(f"  {_fmt_node(n)}" for n in matches)])
+    return "\n".join([head, *(f"  {fmt_node(n)}" for n in matches)])
 
 
 def _cmd_orphans(engine: QueryEngine) -> str:
@@ -190,7 +146,7 @@ def _cmd_orphans(engine: QueryEngine) -> str:
     if not nodes:
         return "No orphaned metadata (every node has at least one Apex link)."
     head = f"{len(nodes)} orphan(s) — no Apex references in or out (dead or UI-bound):"
-    return "\n".join([head, *(f"  {_fmt_node(n)}" for n in nodes)])
+    return "\n".join([head, *(f"  {fmt_node(n)}" for n in nodes)])
 
 
 def _cmd_never_referenced(engine: QueryEngine, *, no_tests: bool = False) -> str:
@@ -201,7 +157,7 @@ def _cmd_never_referenced(engine: QueryEngine, *, no_tests: bool = False) -> str
 
     def _fmt(n: Node) -> str:
         suffix = "  [test]" if n.attributes.get("is_test") else ""
-        return f"  {_fmt_node(n)}{suffix}"
+        return f"  {fmt_node(n)}{suffix}"
 
     filter_note = " (test classes excluded)" if no_tests else ""
     head = (

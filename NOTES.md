@@ -2082,4 +2082,208 @@ graph." Reading the authoritative Metadata API is more credible than a Tooling
 side-channel, and avoids betting on Tooling's unproven Flow.Metadata
 reliability. The cost (a SOAP client in a REST stack) was scoped and accepted
 deliberately — see the Day-5 SOAP probe that de-risked it before building.
+
+
+---
+
+## Week 8 Day 1 — Claude client (orchestration foundation)
+
+### What shipped
+- `app/intelligence/orchestration/claude_client.py` (+ package `__init__.py`)
+  — async Claude client wrapping `AsyncAnthropic`, with:
+  - the agentic tool loop (stream text → detect tool_use → dispatch handlers
+    concurrently → feed results back → repeat until end_turn or max_iterations)
+  - streaming via `client.messages.stream()` (gives streamed text AND the
+    final message with usage in one pass)
+  - `SessionUsage`/`TurnUsage` cost tracking (in-memory, session-scoped;
+    pricing constants for claude-sonnet-4-6)
+  - `max_iterations` guard (default 10) against runaway tool loops
+  - externally-registered tool handlers (`register_tool`) — client stays
+    generic, knows nothing about Salesforce
+- Model targeted: `claude-sonnet-4-6` (verified current via platform docs).
+- Smoke-tested (cost math $18.00 for 1M+1M tokens, instantiation, tool
+  registration — all green), then removed the throwaway smoke script; the
+  client's real verification is the Day 6 end-to-end live call plus the unit
+  tests landing with tool_definitions.
+
+### Not yet exercised (honest status)
+- The agentic loop has NOT made a real API call yet. Streaming, tool dispatch,
+  and usage capture are structurally complete but verified only by smoke test
+  (no network). First live call is the Day 6 end-to-end test. Until then,
+  "working" means "compiles + instantiates + cost math correct," not "proven
+  against the live API."
+
+### Design decisions worth remembering
+- `messages.stream()` context manager over `stream=True`: the manager yields
+  streamed text and exposes the final accumulated message (with `.usage`) at
+  close — no manual event accumulation for token counting.
+- Agentic loop lives in the client, not the tool layer: the client owns
+  conversation-turn mechanics; tools just return data strings.
+- Concurrent tool dispatch via `asyncio.gather`: right pattern for multi-tool
+  turns. No measurable benefit yet (handlers are in-memory graph queries), but
+  free to do correctly now.
+- None of these rose to ADR level — idiomatic SDK usage, not decisions with
+  genuine architectural alternatives. The one real Week-8 architecture call so
+  far (tool-pull vs pre-loaded context, Option A) gets its ADR when the
+  retrieval layer lands, not here.
+
+### Shell learning
+- `python -c "..."` with f-strings + `$` breaks under PowerShell quoting; a
+  real `.py` file run with `python -m scripts.<name>` sidesteps it.
+- Scripts importing `app` must run as `python -m scripts.<name>` from backend/,
+  never `python scripts\<name>.py` — the latter puts scripts/ on sys.path
+  instead of the package root, so `app` won't resolve.
+
+---
+
+## Week 8 Day 2 — Shared naming module + graph-query tools
+
+### What shipped
+- `app/intelligence/graph/naming.py` — extracted name resolution
+  (`resolve_one`), node formatting (`fmt_node`), and edge-label logic
+  (`edge_relation_label`, `edge_method_detail`, `VIA_LABEL`/`EDGE_LABEL`) out
+  of cli.py so the CLI and the orchestration tool layer describe metadata
+  identically. ADR-013.
+- `cli.py` refactored to import from naming; kept `_resolve_one`/`_fmt_node`
+  as thin aliases so existing test import paths still resolve. `_cmd_impact`
+  now calls the shared label helpers. Behavior-preserving — full suite stayed
+  green across the refactor.
+- `app/intelligence/orchestration/tool_definitions.py` — 5 graph-query tools
+  Claude can call (find_dependencies, find_references_to, analyze_impact,
+  find_by_name, graph_health), as thin async wrappers over QueryEngine,
+  reusing naming.py for resolution + labels. Static TOOL_SCHEMAS + a
+  build_tools() factory returning (schemas, handler_map) for
+  ClaudeClient.register_tool. Returns are lightly-structured text, not JSON
+  (tool-pull model — Claude reads these to reason; prose costs fewer tokens
+  while preserving name/type/via-label).
+- `tests/unit/test_tool_definitions.py` — 21 hermetic tests, incl. a direction
+  guard (test_dependencies_and_references_are_opposite_directions) so the
+  dependencies/references pair can't be silently inverted, and a Flow-action
+  label test asserting "method call" is NOT used for a Flow edge (the Week-7
+  mislabel bug, now guarded at the tool layer).
+- Verified once against the real cached org (throwaway verify_tools.py, since
+  removed): analyze_impact PricingFlowAction reproduced the CLI's "via Flow
+  action" → Opportunity_Sales_Orchestration_Flow; graph_health surfaced the
+  known correct orphan.
+- Suite: 230 → 251.
+
+### Why naming.py came first
+Day 2's deliverable is the tools, but they need the same name resolution and
+edge labels the CLI uses. Two choices: duplicate the logic (drift risk on the
+demo-critical labels) or extract a shared module. Extracted — ADR-013. The
+label maps are product vocabulary, not plumbing; they must be single-sourced
+so Claude and the CLI never describe the same edge differently.
+
+### Why no ADR for tool_definitions
+Building tool wrappers over an existing, tested query engine is a routine
+extension, not an architectural decision — no real alternatives or trade-offs
+to weigh. The one genuine call (lightly-structured text over JSON returns) is
+an application of the tool-pull decision, and folds into the ADR that lands
+with retrieval.py. Padding the ADR log with a routine wrapper would blunt it.
+
+### Test discipline note (caught my own fixture mistake)
+A test asserted "1 direct dependent" for Helper, but the fixture I wrote gives
+Helper TWO dependents (Caller via CALLS + OppSelectorTest via REFERENCES). The
+handler counted correctly ("2 direct dependent(s)"); my assertion had the wrong
+number. The tight substring assertion caught the mismatch — a looser
+"direct dependent" check would have passed and hidden it. Same lesson as the
+Week-7 MultiDiGraph story: assert on data correctness, not just "did it run."
+
+### Note to self — test count
+Suite is at 251. Was recorded at 201 end of Week 7; reached 230 before today
+(the +29 predate this refactor — confirm with git log) and +21 from
+test_tool_definitions today. Reconcile the running count in ROADMAP at week's
+end.
+
+---
+
+## ADR-013 — Shared name resolution + edge labels in graph/naming.py
+
+**Status:** Accepted
+**Date:** Week 8, Day 2
+
+**Decision:** Name resolution (`resolve_one`), node formatting (`fmt_node`), and
+edge-label logic (`edge_relation_label`, `edge_method_detail`, plus the
+`VIA_LABEL`/`EDGE_LABEL` maps) live in `intelligence/graph/naming.py`. Both
+`interfaces/cli.py` and the orchestration tool layer import from it. The CLI
+keeps `_resolve_one`/`_fmt_node` as thin aliases so existing tests' import
+paths still resolve.
+
+**Alternatives considered:**
+- **Leave it in cli.py; have orchestration import from interfaces/cli.py.**
+  Zero CLI change, but inverts the dependency direction — orchestration (a core
+  layer) would depend on a UI layer. Brittle as the CLI grows UI-specific
+  imports (argparse, stdout concerns).
+- **Duplicate the ~20 lines into the orchestration layer.** Fastest, but the
+  demo-critical label maps would then exist in two places and drift. The CLI
+  and Claude would eventually describe the same edge differently — a visible
+  product inconsistency.
+
+**Trade-off:** A new shared module + a one-time CLI refactor (and two alias
+lines) vs. correct dependency direction and a single source of truth for the
+labels that both the CLI demo and Claude's tool output depend on.
+
+**Why this:** The label maps are product-facing vocabulary, not plumbing. They
+must be single-sourced. Placing them in the graph layer (where the graph
+vocabulary already lives) gives both consumers a downward dependency and kills
+the drift risk before it starts. Verified behavior-preserving: full suite green
+after the move, and `impact PricingFlowAction` still reports `via Flow action`
+identically through naming.edge_relation_label.
+
+**Is this ADR-worthy?** Borderline-yes. Small, but a genuine "where does shared
+logic live + which way do dependencies point" decision with a real trade-off
+and a wrong answer that would have bitten later. Banked as a "layering
+discipline" story, not a marquee architecture call.
+
+---
+
+## Week 8 Day 3 — get_source content-retrieval tool
+
+### What shipped
+- `tool_definitions.py` — added `get_source`, a 6th tool that returns raw
+  component source: Apex Body (class/trigger) or Flow XML. Resolves a name to
+  a node, then branches on node_type:
+  - APEX_CLASS/APEX_TRIGGER: node.id IS the cache record_id → cache.get_one →
+    Body.
+  - FLOW: node.id is synthetic (flow:<name>), so fetch Flow records and match
+    on DeveloperName → xml.
+  - OBJECT: derived node (ADR-010), no source — returns a clear explanation,
+    not an error.
+- `build_tools(engine, graph, cache=None, org_key=None)` — cache/org_key now
+  optional; get_source is included only when both are supplied. The 5
+  graph-query tools never needed a cache, so the signature reflects that.
+- Soft 12k-char truncation guard on returned source — a guardrail against one
+  pathological large flow/class blowing the context window. NOT token-budget
+  management (that's retrieval/compression, Day 5); just a bound with a clear
+  [truncated] marker.
+- `test_tool_definitions.py` — 21 → 30 tests: get_source across Apex/trigger/
+  Flow/Object/unknown/no-body/truncation, plus conditional-inclusion tests
+  (no cache → 5 tools, cache → 6). Suite 251 → 260.
+- Verified live (throwaway verify_get_source.py, removed): pulled real
+  PricingFlowAction Apex and the full Opportunity_Sales_Orchestration_Flow XML
+  from the cache through the tool.
+
+### One tool, not two (design note, not ADR)
+ROADMAP planned get_apex_source + get_flow_definition. Built as a single
+get_source instead: the Apex-id-vs-Flow-synthetic-id asymmetry is incidental
+complexity better hidden behind one tool than exposed as two, and in the
+tool-pull model Claude shouldn't have to pre-know a component's type to ask
+for its source. Application of "let the data drive, hide incidental
+complexity" — a tool-shape choice, not an architectural fork. Not ADR-worthy.
+
+### Real-org finding — the graph is missing a real dependency (confirms parked item)
+The live Flow XML for Opportunity_Sales_Orchestration_Flow makes the Week-7
+parked item concrete. The flow contains:
+  - a recordLookups on Opportunity (get_opportunity) — a real Object dependency
+    the graph does NOT capture (we only edge the TRIGGER object, not record
+    operations)
+  - a subflow call to Evaluate_Pricing_Need — captured (Flow→Flow subflow edge)
+  - an apex actionCall to PricingFlowAction — captured (Flow→Apex flow_action)
+So get_source just gave us eyes on exactly the gap the parked "Flow
+record-operation edges" item describes: this flow depends on Opportunity via a
+recordLookups, invisible to the current builder. Still parked (not a Day-3
+blocker), but now evidenced by real data, not theory.
+
+### Test count
+Suite 260. Running reconciliation deferred to ROADMAP at week's end.
 ---
