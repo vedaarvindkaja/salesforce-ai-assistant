@@ -2537,4 +2537,56 @@ Documentation item, not a prompt fix — the output was correct.
 
 ### Tests
 - No new tests (soql prompt + wrapper covered by Day-1 tests). Suite 296.
+
+## Week 9 Day 4 — Capability 4: Deployment impact analysis
+
+### What shipped
+- impact mode live-verified. "Deployment impact if I change PricingFlowAction?"
+  → all 5 structured sections (DIRECT/TRANSITIVE/RELIES ON/RISK/CHECKS), rated
+  HIGH correctly (Flow dependency = High per rubric), and reproduced the Week-8
+  Flow-vs-Apex insight GENERATIVELY: Flow Action binding isn't compile-time
+  validated, so a signature change fails silently at runtime.
+- get_source-free exclusion HELD PERFECTLY. Claude worked from topology alone
+  (analyze_impact + find_references_to --transitive + find_dependencies), never
+  flailed for source. Day-1 exclusion call validated.
+- Cheapest non-qa capability: $0.0298 (5,182 in tokens vs apex's 19,190). As predicted.
+- `app/interfaces/ask_impact.py` — wrapper, main(default_mode="impact").
+
+### CRITICAL FINDING — deterministic CLI audited the AI, skeleton grounded but commentary over-narrates
+Ran the deterministic cli.py as ground truth against Claude's claims:
+  - `cli impact PricingFlowAction` → 1 inbound: Opportunity_Sales_Orchestration_Flow
+    via Flow action. ✅ matches Claude's DIRECT exactly.
+  - `cli dependencies PricingFlowAction` → OpportunitySelector, PricingService.
+    ✅ both real — Claude did NOT invent the RELIES ON table.
+  - `cli depends-on PricingFlowAction --transitive` → +URSIP_Opportunity_After_Save.
+    ✅ transitive edge real.
+VERDICT: every node/edge Claude named is REAL. The skeleton is exact. What's NOT
+graph-established is the interpretive PROSE layered on top — "PricingService =
+core pricing logic" (never read it, no get_source), "if its query interface
+changes" (inferred mechanism), "could corrupt the entire orchestration." Confident
+risk commentary that outruns what the edges license. For a DEPLOYMENT tool —
+output developers act on — that's the riskiest place to over-narrate.
+
+### Two coupled findings → Week 10 (deferred, do NOT band-aid now)
+1. Refinement #10 (edge labels on find_dependencies) is now LOAD-BEARING, not
+   optional. Claude over-narrates partly BECAUSE find_dependencies/depends-on
+   strip the via-label — it has the node but not the relationship kind, so it
+   guesses mechanism ("likely calls it as a subflow" hedge = same root cause).
+2. impact prompt over-narration.
+COUPLING + ORDER: do #10 FIRST in Week 10, then re-run this exact PricingFlowAction
+query and check if over-narration self-corrects before touching the prompt. The
+narration may largely fix itself once Claude has the mechanism. Only tighten the
+prompt for embellishment that REMAINS after the data gap closes. Fixing prompt
+before data = band-aid you'd delete. Decided to defer (Veda's call): superseded
+work isn't worth doing twice.
+
+### Option-B watch — warm-up signal now hard to isolate
+impact's find_by_name is PROMPT-DIRECTED (step 1), like soql. 3 of 4 capabilities
+now induce find_by_name in step 1 by design — so find_by_name-then-act is mostly
+DESIGNED, not waste, across the MVP. Over-fetch count stays 2 (apex + qa warm-ups
+on exact names remain the only clean signal). Noting: the prompts are making the
+warm-up pattern harder to detect, which itself is Option-B-relevant.
+
+### Tests
+- No new tests (impact prompt + wrapper covered by Day-1 tests). Suite 296.
 ---
