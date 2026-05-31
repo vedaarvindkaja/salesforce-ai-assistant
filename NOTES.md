@@ -2433,7 +2433,7 @@ through the tools, from natural language. Cost ~$0.024/query (Sonnet 4.6).
   to find_dependencies output) — PARKED, not a Week-8 deliverable; the hedge is
   honest, not wrong.
 
-### Cost tracking is real
+### Cost tracking is realq
 SessionUsage printed $0.0247 / $0.0235 per query. Cross-check against the
 console Usage page (settings → Usage) — app-layer estimate should match
 provider billing within rounding. $5 credits ≈ ~200 queries at this shape.
@@ -2467,4 +2467,39 @@ the count is clean. Baseline for Week 9: 275.
 One shared orchestration surface. ask_cli.py gains a --mode flag (or mode
 parameter). Thin entry-point wrappers (ask_apex.py, ask_soql.py, ask_impact.py)
 added inline as each capability is built — not deferred to Week 14.
+
+## Week 9 Day 2 — Capability 2: Apex explanation/refactoring
+
+### What shipped
+- apex mode live-verified against real org. `--mode apex "Explain TriggerDispatcher..."`
+  produced a graph-grounded explanation: pulled get_source + find_references_to +
+  find_dependencies (+ transitive), anchored refactoring advice to the dependency graph.
+- Headline result: Claude flagged TriggerDispatcher as DEAD CODE (zero inbound refs) —
+  an insight only possible WITH the graph; a plain LLM reading source alone can't know
+  nothing references it. Apex-mode equivalent of the Week-8 PricingFlowAction payoff.
+- Self-discovered the org's SECOND trigger framework (MetadataTriggerHandler /
+  CaseObjectTrigger) by exploring outward; flagged the architectural inconsistency.
+  Unprompted — followed the graph.
+- `app/interfaces/ask_apex.py` — thin wrapper, main(default_mode="apex"). Clean
+  portfolio entry point. Verified via --help (default: apex) + import; no extra
+  live call (apex path already proven this session — don't burn credit re-proving).
+
+### Cost observation (real Option-B / budget data)
+- apex query cost $0.088 vs qa baseline ~$0.024 — 3.7x. Cause: get_source pulled
+  4 full source bodies (19,190 input tokens). apex is the MOST EXPENSIVE capability
+  because it reads source aggressively. impact (no get_source) will be cheapest.
+- Note: this cost is SOURCE-READING, not discovery round-trips — pre-loading (Option B)
+  would NOT reduce it. Different cost axis than the names-index question.
+
+### ADR-014 watch — over-fetch is now 2 instances (not yet "repeated")
+- find_by_name('TriggerDispatcher') THEN get_source('TriggerDispatcher') — warm-up
+  on an EXACT name, same as Week-8 Day-6. Second data point, same pattern.
+- Distinct from the legitimate find_by_name('Trigger') mid-stream (broad discovery,
+  tool working as intended). Only the warm-up-on-exact-name is wasteful.
+- If Day 3 (soql) shows a third warm-up, the names-index conversation becomes real.
+  Trigger (c) approaching, not yet met.
+
+### Tests
+- No new tests (apex prompt + wrapper covered by Day-1 tests: build_apex_prompt
+  assertions + registry contract + default_mode override). Suite 296.
 ---
