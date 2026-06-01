@@ -241,3 +241,39 @@ def test_incoming_edges_preserves_attributes():
     q = QueryEngine(_impact_graph())
     edges = q.incoming_edges("obj:opportunity")
     assert all(e.attributes.get("via") == "soql" for e in edges)
+
+# ---- outgoing_edges (Week 10 Day 1 — Refinement #10) ----
+
+def test_outgoing_edges_returns_all_out_edges():
+    q = QueryEngine(_impact_graph())
+    edges = q.outgoing_edges("01p1")  # OppSelector → Opportunity via soql
+    assert len(edges) == 1
+    assert edges[0].attributes.get("via") == "soql"
+
+def test_outgoing_edges_parallel_edges():
+    # Caller has both a REFERENCES and a CALLS edge to Helper — both returned
+    q = QueryEngine(_impact_graph())
+    edges = q.outgoing_edges("01p3")
+    types = {e.edge_type for e in edges}
+    assert types == {EdgeType.REFERENCES, EdgeType.CALLS}
+    assert len(edges) == 2
+
+def test_outgoing_edges_filtered_by_type():
+    q = QueryEngine(_impact_graph())
+    calls = q.outgoing_edges("01p3", edge_type=EdgeType.CALLS)
+    assert len(calls) == 1
+    assert calls[0].attributes["method"] == "run"
+
+def test_outgoing_edges_missing_node():
+    q = QueryEngine(_impact_graph())
+    assert q.outgoing_edges("nonexistent") == []
+
+def test_outgoing_edges_no_out_edges():
+    # Helper has only in-edges, no out-edges
+    q = QueryEngine(_impact_graph())
+    assert q.outgoing_edges("01p4") == []
+
+def test_outgoing_edges_preserves_attributes():
+    q = QueryEngine(_impact_graph())
+    edges = q.outgoing_edges("01p1")
+    assert all(e.attributes.get("via") == "soql" for e in edges)

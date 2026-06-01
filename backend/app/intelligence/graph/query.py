@@ -107,6 +107,43 @@ class QueryEngine:
             return (src_name.casefold(), e.edge_type.value)
 
         return sorted(edges, key=_sort_key)
+    
+    def outgoing_edges(
+    self, node_id: str, *, edge_type: EdgeType | None = None
+    ) -> list[Edge]:
+        """Return the Edge objects pointing OUT FROM node_id (out-edges).
+
+        The outward mirror of incoming_edges. Returns edge metadata — via,
+        method, edge_type — so callers can show HOW node_id depends on each
+        target, not just which targets exist.
+
+        MultiDiGraph (ADR-011): every parallel out-edge is returned separately.
+
+        Args:
+            node_id: source node whose outgoing edges we want.
+            edge_type: if given, only edges of this type are returned.
+
+        Returns:
+            List of Edge objects, sorted by (target name, edge type) for
+            deterministic output. Empty if node missing or no matching edges.
+        """
+        if node_id not in self._nx:
+            return []
+
+        edges: list[Edge] = []
+        # out_edges with keys+data on a MultiDiGraph: (src, tgt, key, data)
+        for _src, tgt, _key, data in self._nx.out_edges(node_id, keys=True, data=True):
+            edge = Edge(**data)
+            if edge_type is not None and edge.edge_type != edge_type:
+                continue
+            edges.append(edge)
+
+        def _sort_key(e: Edge) -> tuple[str, str]:
+            tgt_node = self._graph.get_node(e.target_id)
+            tgt_name = tgt_node.name if tgt_node else e.target_id
+            return (tgt_name.casefold(), e.edge_type.value)
+
+        return sorted(edges, key=_sort_key)
 
     # ------------------------------------------------------------------
     # Paths

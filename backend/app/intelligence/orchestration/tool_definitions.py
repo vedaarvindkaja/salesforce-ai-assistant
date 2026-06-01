@@ -234,12 +234,32 @@ def build_tools(
         if err:
             return err
         transitive = bool(inp.get("transitive", False))
-        deps = engine.what_does_it_depend_on(node.id, transitive=transitive)
         kind = "transitive" if transitive else "direct"
-        if not deps:
-            return f"{fmt_node(node)} depends on nothing in the graph."
-        head = f"{fmt_node(node)} has {len(deps)} {kind} dependenc(ies):"
-        return "\n".join([head, *(f"- {fmt_node(n)}" for n in deps)])
+
+        if transitive:
+            # Transitive: node-list only (edge detail across multi-hop chains
+            # is noise — the mechanism label belongs on the direct hop).
+            deps = engine.what_does_it_depend_on(node.id, transitive=True)
+            if not deps:
+                return f"{fmt_node(node)} depends on nothing in the graph."
+            head = f"{fmt_node(node)} has {len(deps)} {kind} dependenc(ies):"
+            return "\n".join([head, *(f"- {fmt_node(n)}" for n in deps)])
+        else:
+            # Direct: use edge-level detail so Claude knows the mechanism,
+            # not just the target. Fixes the over-narration root cause (Week 10
+            # Refinement #10) — previously stripped via-label forced guessing.
+            edges = engine.outgoing_edges(node.id)
+            if not edges:
+                return f"{fmt_node(node)} depends on nothing in the graph."
+            head = f"{fmt_node(node)} has {len(edges)} {kind} dependenc(ies):"
+            lines = [head]
+            for e in edges:
+                tgt = graph.get_node(e.target_id)
+                tgt_label = fmt_node(tgt) if tgt else e.target_id
+                relation = edge_relation_label(e)
+                detail = edge_method_detail(e)
+                lines.append(f"- {tgt_label} via {relation}{detail}")
+            return "\n".join(lines)
 
     async def find_references_to(inp: dict) -> str:
         node, err = resolve_one(engine, inp["name"])

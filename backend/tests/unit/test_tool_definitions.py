@@ -155,6 +155,23 @@ async def test_find_dependencies_direct():
     out = await _tools()["find_dependencies"]({"name": "Caller"})
     assert "Helper" in out
     assert "1 direct" in out
+    assert "via" in out  # Refinement #10: mechanism label now present
+
+@pytest.mark.asyncio
+async def test_find_dependencies_direct_includes_relation_label():
+    # Caller → Helper via CALLS edge — label must be present, not just node name.
+    out = await _tools()["find_dependencies"]({"name": "Caller"})
+    # The fixture edge is a CALLS edge, so the label is "method call"
+    assert "method call" in out
+
+@pytest.mark.asyncio
+async def test_find_dependencies_transitive_node_list_only():
+    # Transitive output stays as node-list (no per-hop edge labels — noise at multi-hop).
+    out = await _tools()["find_dependencies"]({"name": "Caller", "transitive": True})
+    assert "Helper" in out
+    assert "transitive" in out
+    # Should NOT have via-labels in transitive mode
+    assert "via" not in out
 
 @pytest.mark.asyncio
 async def test_find_dependencies_none():
