@@ -2589,4 +2589,115 @@ warm-up pattern harder to detect, which itself is Option-B-relevant.
 
 ### Tests
 - No new tests (impact prompt + wrapper covered by Day-1 tests). Suite 296.
+
+## Week 10 Day 1 — Refinement #10: edge labels on find_dependencies
+
+### What shipped
+- `QueryEngine.outgoing_edges()` — outward mirror of `incoming_edges()`.
+  Uses `self._nx.out_edges(node_id, keys=True, data=True)`, returns full
+  Edge objects with via/method attributes, sorted by target name. Inserted
+  immediately after `incoming_edges` in the Edge-level queries block.
+- `find_dependencies` handler updated — direct mode now calls
+  `outgoing_edges()` instead of `what_does_it_depend_on()`, emits
+  `- {target} via {relation}{detail}` per dependency. Transitive mode
+  intentionally stays node-list-only: per-hop labels across a multi-hop
+  chain are noise, not signal. Mechanism belongs on the direct hop.
+- 8 new tests: 6 in test_graph_query.py (outgoing_edges — mirrors the
+  incoming_edges test structure with source/target swapped), 2 in
+  test_tool_definitions.py (label present in direct output, no via-label
+  in transitive output).
+- 1 test correction: test_find_dependencies_direct_includes_relation_label
+  initially asserted "name reference" (REFERENCES edge) — fixture edge is
+  actually CALLS, label is "method call". Fixed before final run.
+- Suite: 296 → 304 passing.
+
+### Why this is load-bearing (not optional polish)
+find_dependencies was returning node names only — Claude had the target
+but not the relationship kind, so it guessed mechanism. "Core pricing
+logic", "if its query interface changes" — confident prose that outran
+what the edges license. With outgoing_edges feeding the handler, Claude
+now sees "via method call (publishPricingEvent())" and has no reason to
+invent an explanation. Data fix before prompt fix — the coupling order held.
+
+### Smoke test confirmed
+Synthetic graph smoke test output:
+  PricingFlowAction (ApexClass) has 2 direct dependenc(ies):
+  - OpportunitySelector (ApexClass) via SOQL/DML query
+  - PricingService (ApexClass) via method call (calculate())
+Mechanism present, format matches analyze_impact vocabulary. Ready for
+live re-run on Day 2.
+
+### ADR note
+No new ADR. outgoing_edges is a routine symmetric extension of an
+existing pattern — no genuine architectural alternatives to weigh.
+The design decision (direct=labels, transitive=nodes) is documented
+in the handler comment and the test assertion.
+
+## Week 10 Day 2 — Refinement #10 live verification
+
+### Re-run: PricingFlowAction impact query post-fix
+
+Ran the exact Week-9-Day-4 query that exhibited over-narration:
+`python -m app.interfaces.ask_impact "What is the deployment impact of PricingFlowAction?"`
+
+### Self-correction verdict: COMPLETE
+
+The over-narration self-corrected without prompt changes.
+
+RELIES ON table (the failure site in Week 9):
+- Week 9: "core pricing logic", "if its query interface changes" — inferred
+  from node name, no graph basis
+- Week 10: "CALLS byIds() method + name reference", "CALLS publishPricingEvent()
+  method + name reference" — stated from edge data, graph-grounded
+
+Root cause confirmed: find_dependencies was stripping the via-label, forcing
+Claude to guess mechanism. With outgoing_edges feeding the handler, Claude
+has the method name and edge type — it states the coupling and stops.
+
+### What remains (acceptable, not over-narration)
+- Cascade claim ("if signatures change, cascades to both flows") — correct
+  inference from a CALLS edge; method calls couple on signatures. Graph-licensed.
+- RECOMMENDED CHECKS #3/#4 (subflow variable mappings, @InvocableMethod
+  signature) — Salesforce platform knowledge about what Flow-action edges mean
+  operationally, not claims about unread code. This is the tool's value-add.
+
+### Coupled fix complete — prompt tightening not needed
+Order held: data fix first, self-correction checked, prompt untouched.
+No band-aid applied. Cost: $0.0414 (vs $0.0298 Week 9 — slightly higher,
+3-turn session vs likely 2-turn; tool-call pattern still disciplined,
+0 warm-up over-fetches in impact mode).
+
+## Week 10 Day 3 — Semantic eval harness
+
+### What shipped
+- `evals/` package: eval_case.py (EvalCase dataclass), eval_runner.py
+  (runner + report), cases/ (qa/apex/soql/impact, 5 cases each).
+- 20 cases total across 4 capabilities. One command: `python -m evals.eval_runner`.
+  Optional --mode flag for single-capability runs.
+- Assertions: required substrings (grounding + structure) + forbidden substrings
+  (known failure modes). Full AI output printed on failure — diagnose without
+  re-running. Excluded from default pytest suite (live API, real cost ~$0.035/case).
+- 20/20 passing on first clean run. Total cost $0.78.
+
+### One case fix mid-run
+impact case 2 ("States mechanism via edge label") initially required "method call"
+— too brittle, one specific phrase from one tool-call path. Fixed to require "via"
++ forbid the Week 9 over-narration phrases ("core pricing logic", "query interface").
+Correct behavior: assert what we're guarding (no invented mechanism), not how
+Claude phrases a specific correct answer.
+
+### Harness design notes
+- Cases target specific known failure modes, not generic "does it answer."
+  The forbidden strings are the regression guard; the required strings are
+  the grounding check (real node names must appear).
+- Non-determinism handled by asserting vocabulary, not exact phrasing.
+- Transitive assertions (URSIP in impact cases) verify multi-hop reasoning
+  works end-to-end, not just direct lookup.
+- Cost ledger: ~$0.70-0.78/full run. Weekly regression cadence, not CI.
+
+### Week 10 complete
+304 unit tests + 20 semantic evals. All green.
+Coupled fix (Refinement #10 + self-correction check + harness) delivered
+in 3 days as planned. No prompt tightening needed — data fix was sufficient.
+MCP server starts fresh in Week 11.
 ---
