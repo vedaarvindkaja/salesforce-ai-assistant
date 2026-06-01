@@ -724,41 +724,75 @@ at $0.088/query.
 
 ---
 
-#### Week 10 — Evaluation harness (20 hours)
+#### Week 10 — Prompt quality + lightweight eval harness (15 hours) ✅ — completed, ~12h
 
-**Goal:** Build rigorous evaluation, hit 90%+ accuracy on test cases.
+**Goal (as planned):** Build evaluation harness, iterate prompts to 90%+ pass rate.
 
-**Day 1-2 (6 hours)** — Eval framework
-- `evals/runners/eval_runner.py`
-- pytest-based evaluation framework
-- Test case format: input + expected output schema
-- Scoring: exact match, semantic similarity, structural correctness
+**What actually shipped (reconciled):** Eval discovery was done inline during
+Week 9 — live verification against the real org every day, deterministic CLI
+auditing the AI's claims. The "run 100 cases, find failures, iterate" loop was
+the mechanism; Week 9 already completed a pass of it. Week 10 therefore focused
+on the specific diagnosed failure (impact-mode over-narration) and a lightweight
+regression harness rather than a general-purpose eval framework.
 
-**Day 3 (4 hours)** — Test cases for Capabilities 1-2
-- 20+ test cases for metadata Q&A
-- 20+ test cases for Apex explanation
-- Run evals, identify failures
+**Day 1** — Refinement #10: edge labels on find_dependencies ✅
+- `QueryEngine.outgoing_edges()` — outward mirror of `incoming_edges()`.
+  Returns full Edge objects (via/method attributes) for outgoing direction.
+  Inserted after `incoming_edges` in the Edge-level queries block.
+- `find_dependencies` handler updated — direct mode calls `outgoing_edges()`
+  and emits `via {relation}{detail}` per dependency. Transitive stays
+  node-list-only: per-hop labels across multi-hop chains are noise.
+- 8 new tests: 6 QueryEngine (mirrors incoming_edges test structure),
+  2 tool_definitions (label present in direct output; no via in transitive).
+- Suite: 296 → 304 passing.
+- Root cause of impact-mode over-narration: find_dependencies stripped the
+  via-label, forcing Claude to guess mechanism. Now Claude sees
+  "via method call (publishPricingEvent())" and has no reason to invent prose.
 
-**Day 4 (4 hours)** — Test cases for Capabilities 3-5
-- 20+ for SOQL generation
-- 20+ for deployment impact
-- 20+ for debug log analysis
+**Day 2** — Live re-run + self-correction assessment ✅
+- Re-ran the exact Week-9-Day-4 PricingFlowAction impact query.
+- VERDICT: over-narration self-corrected without prompt changes.
+  RELIES ON table (the failure site): Week 9 said "core pricing logic",
+  "if its query interface changes" — inferred from node name, no graph basis.
+  Week 10: "CALLS byIds() method + name reference", "CALLS publishPricingEvent()
+  method + name reference" — stated from edge data, graph-grounded.
+- Remaining prose (cascade claim, @InvocableMethod signature guidance) assessed
+  as appropriate expert interpretation of edge types, not over-narration.
+  Prompt tightening not needed — data fix was sufficient. Coupling order held.
+- Cost: $0.0414 (3-turn session, disciplined tool-call pattern).
 
-**Day 5-6 (5 hours)** — Iterate on prompts
-- Analyze failure patterns
-- Adjust prompt templates
-- Re-run evals
-- Target: 90%+ pass rate across all capabilities
+**Day 3** — Lightweight semantic eval harness ✅
+- `evals/` package: `eval_case.py` (EvalCase dataclass), `eval_runner.py`
+  (runner + report), `cases/` (qa/apex/soql/impact, 5 cases each).
+- 20 cases total. One command: `python -m evals.eval_runner`.
+  Optional `--mode` flag for single-capability runs.
+- Assertions: required substrings (grounding + structure) + forbidden substrings
+  (known failure modes). Full AI output printed on failure.
+- Excluded from default pytest suite (live API, ~$0.035/case, ~$0.78/full run).
+- 20/20 passing on first clean run against real org.
+- One case fix mid-run: "method call" required string too brittle (one specific
+  phrase from one tool-call path). Fixed to require "via" + forbid the Week 9
+  over-narration phrases. Correct approach: assert what we're guarding, not how
+  Claude phrases a specific correct answer.
 
-**Day 7 (1 hour)** — Document eval methodology and results
-- Commit, push, plan Week 11
+**Deliverables (honest checks):**
+- ✅ Refinement #10 — edge labels on find_dependencies (load-bearing, not polish)
+- ✅ Self-correction confirmed — prompt untouched, over-narration gone
+- ✅ Semantic eval harness — 20 cases / 4 capabilities, 20/20 passing
+- ◻ 100+ test cases across 5 capabilities — deliberately not built; over-engineered
+  for work already done inline during Week 9. 5 cases/capability is the right gate.
+- ◻ Capability 5 (debug log) eval cases — not built; capability still parked.
+- ◻ Prompt iteration — not needed; data fix was sufficient.
 
-**Deliverables:**
-- ✅ 100+ evaluation test cases across 5 capabilities
-- ✅ Automated eval runner
-- ✅ 90%+ pass rate documented
-- ✅ Failure analysis with documented fix strategies
-- ✅ Evaluation report in `evals/reports/`
+**Carried forward (unchanged):**
+- Capability 5 (debug log) — parked, revisit Week 12.
+- Flow record-operation edges — parked.
+- FIELD nodes (ADR-010) — Phase 2.
+- REST /graph/ route — Week 13. Graph persistence — Phase 2.
+- Option-B (ADR-014) — still tool-pull. No revival trigger met.
+
+**Tests:** 304 unit tests + 20 semantic evals (separate suite).
+**Cost ledger:** ~$0.78 for full eval run. Impact queries ~$0.04/query.
 
 ---
 
