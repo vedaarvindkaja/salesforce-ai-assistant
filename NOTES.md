@@ -2700,4 +2700,61 @@ Claude phrases a specific correct answer.
 Coupled fix (Refinement #10 + self-correction check + harness) delivered
 in 3 days as planned. No prompt tightening needed — data fix was sufficient.
 MCP server starts fresh in Week 11.
+
+## Week 11 Day 1 — Non-streaming _ask variant + MCP server scaffold
+
+### Environment reconciliation (week start)
+- Claude Desktop: INSTALLED (Anthropic PBC, per Apps list). config json not yet
+  created — normal, it's written when the first MCP server is registered (Day 3).
+- Claude Code: NOT installed (`claude` not recognized). Install at Day 4 start.
+- Augment AI: installed + enabled for this workspace (v0.859.7). No `mcp` key in
+  VS Code settings.json — MCP config path TBD; resolve before Day 4.
+- ROADMAP/README stale for Week 11 (still say 5 capabilities + Cursor) — update Day 5.
+
+### What shipped
+- `ClaudeClient.ask_collected()` — non-streaming variant. Thin consumer of
+  ask(): iterates its own stream, joins chunks, returns one string. Owns NO
+  loop logic — agentic loop, tool dispatch, cost tracking, max_iterations all
+  stay in ask() (no duplication; ADR-013 discipline). MCP tool responses are
+  single strings, so this is the bridge. Cost still on client.session after.
+- `app/interfaces/mcp_server/` package created (__init__.py + server.py).
+- `server.py` — Day 1 scaffold: FastMCP("salesforce-metadata-graph"), stdio
+  transport, lazy graph bootstrap (_get_engine, module-cached), one `health`
+  tool. Capability tools deferred to Day 2.
+
+### Design decisions
+- Lazy-load over eager: a long-lived server that exits at startup shows in the
+  host as "failed to connect" with no readable reason. Lazy + GraphLoadError →
+  server starts clean, returns a readable error STRING on first tool call if
+  cache/tokens missing. Better failure ergonomics for the Day 3-4 debugging.
+- GraphLoadError, not SystemExit: ask_cli._load() raises SystemExit (right for a
+  one-shot process). A long-lived server must not kill itself on one bad call.
+- stdout reserved for JSON-RPC: logging forced to stderr. A stray stdout print
+  corrupts the protocol stream — the #1 MCP "won't connect" cause. Guarded.
+- Graph loaded ONCE per process (vs ask_cli's per-invocation _load): the server
+  is long-lived; rebuilding the 57-node graph per tool call would be wasteful.
+- Working dir: _CACHE_PATH is relative to backend/ (same as cli.py/ask_cli.py).
+  Server must launch from backend/. Client configs (Day 3-4) set this explicitly.
+
+### Verification (honest status)
+- ask_collected: compiles; both ask + ask_collected present; 304 tests green
+  (pure addition, existing streaming path untouched).
+- server.py: compiles; imports resolve; health tool registered; mcp named.
+  Smoke test — server starts, logs the startup line, blocks on stdin waiting
+  for a client (the pass condition). The Ctrl+C teardown produces a noisy
+  WouldBlock→CancelledError→KeyboardInterrupt stack — harmless; that's anyio
+  unwinding an interrupted blocked-wait, NOT a server error. Under a real host
+  the process gets a clean shutdown, so the noise never appears in production.
+- No live MCP client test yet — that's Day 3 (Claude Desktop). "Working" today
+  means "starts, registers tools, transport initializes," not "proven end-to-end
+  through a client." Same staging as Week 8 Day 1 (client compiled before live).
+- No new unit tests: scaffold verified manually (same rationale as ask_cli — the
+  blocking stdio loop isn't unit-testable; the real test is the Day 3 client).
+
+### Carry-forward
+- Day 2: wire 4 capability tools (qa/apex/soql/impact) over ask_collected,
+  error handling, per-call cost reporting.
+- mcp package added to env — add to requirements.txt on Day 2.
+- Option-B/ADR-014: still tool-pull, no trigger met. (No new evidence today —
+  no live calls made.)
 ---

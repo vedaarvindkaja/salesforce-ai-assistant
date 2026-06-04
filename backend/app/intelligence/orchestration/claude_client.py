@@ -214,10 +214,39 @@ class ClaudeClient:
         else:
             logger.warning("Reached max_iterations (%d) — stopping loop", self.max_iterations)
 
+    async def ask_collected(
+        self,
+        user_message: str,
+        tools: list[dict[str, Any]] | None = None,
+        conversation_history: list[dict[str, Any]] | None = None,
+    ) -> str:
+        """
+        Non-streaming variant of ask(): run the full agentic loop and return
+        the complete answer as a single string.
+
+        This is a thin consumer of ask() — it owns NO loop logic of its own.
+        The agentic loop, tool dispatch, cost tracking, and max_iterations
+        guard all live in ask(); this method just collects the yielded chunks.
+        Used by transports that need one complete string rather than a stream
+        (e.g. the MCP server, whose tool responses are single values).
+
+        Cost/usage is available on self.session after this returns, exactly
+        as with ask().
+        """
+        chunks: list[str] = []
+        async for chunk in self.ask(
+            user_message,
+            tools=tools,
+            conversation_history=conversation_history,
+        ):
+            chunks.append(chunk)
+        return "".join(chunks)
+
     async def _dispatch_tools(
         self, tool_uses: list[anthropic.types.ToolUseBlock]
     ) -> list[dict[str, Any]]:
         """Run all tool calls concurrently and return tool_result blocks."""
+
         async def _call_one(tool_use: anthropic.types.ToolUseBlock) -> dict[str, Any]:
             handler = self._tool_handlers.get(tool_use.name)
             if handler is None:
