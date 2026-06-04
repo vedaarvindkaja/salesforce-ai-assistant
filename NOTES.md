@@ -2757,4 +2757,69 @@ MCP server starts fresh in Week 11.
 - mcp package added to env — add to requirements.txt on Day 2.
 - Option-B/ADR-014: still tool-pull, no trigger met. (No new evidence today —
   no live calls made.)
+
+## Week 11 Day 2 — Four capability tools wired + cost reporting (live-proven)
+
+### Architecture decision: extract capabilities.py (Option A)
+The MCP tools needed the middle of ask_cli._ask (mode → prompt + tool-subset →
+configured client), but _ask returns None and streams — not reusable as-is.
+Chose to EXTRACT that core to orchestration/capabilities.py rather than
+duplicate the subsetting in server.py. Reasoning: CAPABILITY_REGISTRY is the
+single source of truth for "impact excludes get_source" etc.; a second
+enforcement point would drift (the exact CLI-vs-tool-layer duplication ADR-013
+exists to prevent). Also a layering point (ADR-001): server.py importing the
+registry from ask_cli would make one interface depend on another — siblings
+shouldn't. capabilities.py sits in the orchestration layer below both. This is
+the module the ROADMAP target structure already named ("capabilities.py — the
+5 capabilities"); it arrived on schedule, not as new scope.
+
+### What shipped
+- `orchestration/capabilities.py` (NEW) — owns _ALL_TOOLS, _GRAPH_ONLY,
+  CAPABILITY_REGISTRY, VALID_MODES, and build_capability_client(mode, engine,
+  graph, cache, org_key, *, handler_wrapper=None) -> (client, schemas). One
+  function: registry lookup → prompt build → build_tools → subset → register.
+  handler_wrapper hook lets each interface add its own observability without
+  the builder knowing CLI from MCP. Raises ValueError (not SystemExit) on bad
+  mode — callers decide.
+- `ask_cli.py` (refactored) — imports + re-exports CAPABILITY_REGISTRY/
+  VALID_MODES/_ALL_TOOLS from capabilities (back-compat aliases, same trick
+  cli.py used in the ADR-013 refactor so test_ask_cli's import paths resolve).
+  _ask now calls build_capability_client. _load, _announce, parser, main
+  untouched. Streaming behaviour byte-identical.
+- `mcp_server/server.py` — four capability tools (metadata_qa, explain_apex,
+  generate_soql, analyze_deployment_impact) + health. All route through
+  _run_capability(mode, question): cached engine → shared client wiring →
+  ask_collected (NON-streaming, single string) → compact cost footer + stderr
+  cost log. _log_tool wrapper logs INTERNAL agentic-loop tool calls to stderr
+  (host can't see them; this is the Day 3-4 debugging window).
+
+### Verification
+- build_capability_client subsetting validated in isolation (stubbed app deps):
+  qa/apex/soql get all 6 tools; impact excludes get_source; correct prompt per
+  mode; wrapper applied to every handler; ValueError on unknown mode.
+- Full suite 304 passing — refactor held; re-export aliases keep test_ask_cli
+  green. No new unit tests (capability tools are thin wrappers over the proven
+  build_capability_client + ask_collected; the real test is the Day 3 host call).
+- LIVE end-to-end: server.metadata_qa("How is PricingFlowAction invoked...")
+  drove a 3-turn loop, called find_references_to/find_dependencies/
+  analyze_impact + get_source×2, returned the correct @InvocableMethod /
+  via-Flow-action answer with cost footer. Proves ask_collected drives the loop
+  and returns one string. Cost $0.0433 (qa, but source-reading — higher than
+  Week-9's ~$0.024 simple-qa; tracks apex profile because it did apex-like work;
+  not a regression).
+
+### Stale-download gotcha (future-me)
+First server.py copy registered only `health` — browser had saved the Day-2
+download as "server (1).py" and Copy-Item grabbed the stale Day-1 "server.py".
+Fingerprint check before trusting a copied file:
+  Select-String -Path <file> -Pattern "@mcp.tool\(\)" | Measure-Object | Select -ExpandProperty Count
+
+### Carry-forward
+- Day 3: install/verify Claude Desktop, register the server, test all 4 tools
+  through the host on Windows. The _log_tool stderr lines are the debug window.
+- Cost footer currently goes IN the tool response (host's Claude sees it). Fine
+  for now (transparency + demo); move to stderr-only if it adds noise in Day 3.
+- requirements.txt: mcp pinned this commit (was deferred from Day 1).
+- Option-B/ADR-014: still tool-pull. Live qa pulled get_source twice on a
+  source-needing question — expected, not a discovery over-fetch. No trigger.
 ---

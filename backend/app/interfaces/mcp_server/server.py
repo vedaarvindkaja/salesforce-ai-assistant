@@ -38,6 +38,7 @@ from mcp.server.fastmcp import FastMCP
 from app.intelligence.graph.builder import GraphBuilder
 from app.intelligence.graph.query import QueryEngine
 from app.intelligence.graph.storage import MetadataCache
+from app.intelligence.orchestration.capabilities import build_capability_client
 from app.salesforce.token_storage import load_tokens
 
 # Load .env (ANTHROPIC_API_KEY etc.) at import, same as ask_cli.py.
@@ -133,6 +134,67 @@ async def _get_engine() -> tuple[QueryEngine, object, MetadataCache, str]:
 
 
 # ------------------------------------------------------------------
+# Internal tool-call logging (server-side observability).
+#
+# These are the ORCHESTRATION tools (find_dependencies, get_source, ...) that
+# Claude calls INSIDE the agentic loop — invisible to the MCP host, which only
+# sees the capability tool it called. Logging them to stderr surfaces the
+# loop's behaviour in the host's server log, which is how we debug Days 3-4
+# when we can't watch the loop directly. Mirrors ask_cli's _announce, but to
+# the logger (stderr) instead of a bare print.
+# ------------------------------------------------------------------
+def _log_tool(name: str, handler):
+    async def wrapped(inp: dict) -> str:
+        logger.info("  [tool] %s(%s)", name, inp)
+        return await handler(inp)
+    return wrapped
+
+
+# ------------------------------------------------------------------
+# Capability runner — the shared body of all four capability tools.
+#
+# Each MCP capability tool is a thin wrapper that calls this with a fixed mode.
+# Flow:
+#   1. Get the cached engine (readable error string if the graph isn't available).
+#   2. Build a mode-configured client via the SHARED capabilities.py wiring
+#      (same source of truth the CLI uses — no drift).
+#   3. Run the agentic loop NON-STREAMING (ask_collected) — MCP tool responses
+#      are single strings, not chunks.
+#   4. Append a compact cost/usage footer and log cost to stderr (Day 2
+#      deliverable: per-call cost reporting).
+# Any unexpected error becomes a readable string rather than an opaque protocol
+# fault — a long-lived server must survive one bad call.
+# ------------------------------------------------------------------
+async def _run_capability(mode: str, question: str) -> str:
+    try:
+        engine, graph, cache, org_key = await _get_engine()
+    except GraphLoadError as exc:
+        return f"Graph not available: {exc}"
+
+    try:
+        client, schemas = build_capability_client(
+            mode, engine, graph, cache, org_key,
+            handler_wrapper=_log_tool,
+        )
+        answer = await client.ask_collected(question, tools=schemas)
+    except Exception as exc:  # noqa: BLE001 — surface any failure as readable text
+        logger.exception("Capability %r failed", mode)
+        return f"Error running {mode}: {exc}"
+
+    s = client.session
+    logger.info(
+        "capability=%s turns=%d cost=$%.4f",
+        mode, len(s.turns), s.total_cost_usd,
+    )
+    footer = (
+        f"\n\n---\n[{mode}] {len(s.turns)} turn(s) · "
+        f"{s.total_input_tokens:,} in / {s.total_output_tokens:,} out · "
+        f"${s.total_cost_usd:.4f}"
+    )
+    return answer + footer
+
+
+# ------------------------------------------------------------------
 # Tools
 # ------------------------------------------------------------------
 @mcp.tool()
@@ -154,6 +216,74 @@ async def health() -> str:
         f"  nodes:   {s.node_count}  {s.node_type_counts}\n"
         f"  edges:   {s.edge_count}  {s.edge_type_counts}"
     )
+
+
+@mcp.tool()
+async def metadata_qa(question: str) -> str:
+    """Answer a natural-language question about the Salesforce org's metadata
+    graph — objects, Apex classes, triggers, flows, and how they depend on
+    each other.
+
+    Use for general "what / which / how" questions about org structure and
+    dependencies (e.g. "What does the AccountTrigger depend on?", "How is
+    PricingFlowAction invoked?"). The answer is grounded in the real graph and
+    names the actual components involved.
+
+    Argument:
+        question: the natural-language question.
+    """
+    return await _run_capability("qa", question)
+
+
+@mcp.tool()
+async def explain_apex(question: str) -> str:
+    """Explain Apex code, or suggest refactors, in the context of the org's
+    metadata graph.
+
+    Use when the user wants to understand what an Apex class or trigger does,
+    what it depends on, or how to improve it (e.g. "Explain TriggerDispatcher",
+    "How should I refactor AccountService for bulk safety?"). The explanation is
+    anchored to the dependency graph, not guessed from the name.
+
+    Argument:
+        question: what to explain or refactor (name the class/trigger).
+    """
+    return await _run_capability("apex", question)
+
+
+@mcp.tool()
+async def generate_soql(question: str) -> str:
+    """Generate SOQL using the org's ACTUAL schema (real object and component
+    names from the metadata graph).
+
+    Use when the user describes, in natural language, the data they want to
+    query (e.g. "Opportunities created last quarter for accounts with no
+    contacts"). Returns SOQL plus a short rationale.
+
+    Scope note: object/class awareness only — this does NOT validate individual
+    field names (the graph tracks components at object grain, not field grain).
+
+    Argument:
+        question: a natural-language description of the data to query.
+    """
+    return await _run_capability("soql", question)
+
+
+@mcp.tool()
+async def analyze_deployment_impact(question: str) -> str:
+    """Trace the blast radius of changing or deploying a component: what depends
+    on it and could break.
+
+    Topology-only — it analyses the dependency graph and does NOT read source.
+    Use for "what breaks if I change X?" questions (e.g. "What is the deployment
+    impact of changing the Opportunity object?"). Returns the affected
+    components and how each is wired to the target (SOQL/DML, method call, Flow
+    action, reference).
+
+    Argument:
+        question: the change to analyse (name the component).
+    """
+    return await _run_capability("impact", question)
 
 
 # ------------------------------------------------------------------

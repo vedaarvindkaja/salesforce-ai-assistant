@@ -9,9 +9,11 @@ selects which capability lens Claude applies:
     python -m app.interfaces.ask_cli --mode soql "question"   # SOQL generation
     python -m app.interfaces.ask_cli --mode impact "question" # Deployment impact
 
-Each mode maps to a (system_prompt_builder, tool_name_set) pair in
-CAPABILITY_REGISTRY. The tool subsetting happens here — ask_cli owns the
-decision of what Claude sees per capability; build_tools() stays a pure factory.
+The per-mode wiring (which prompt builder + which tool subset) lives in
+orchestration/capabilities.py, shared with the MCP server so the capability
+definitions have one home (see ADR-013-style discipline). This module owns only
+the CLI concerns: argument parsing, graph bootstrap, streaming to stdout, and
+tool-call announcement on stderr.
 
 Separate from cli.py on purpose: cli.py is the DETERMINISTIC graph-query surface
 (pure, synchronous, free). This is the PROBABILISTIC one — it calls the live
@@ -35,41 +37,22 @@ from dotenv import load_dotenv
 from app.intelligence.graph.builder import GraphBuilder
 from app.intelligence.graph.query import QueryEngine
 from app.intelligence.graph.storage import MetadataCache
-from app.intelligence.orchestration.claude_client import ClaudeClient
-from app.intelligence.orchestration.system_prompt import (
-    build_apex_prompt,
-    build_impact_prompt,
-    build_soql_prompt,
-    build_system_prompt,
+from app.intelligence.orchestration.capabilities import (
+    CAPABILITY_REGISTRY,
+    VALID_MODES,
+    _ALL_TOOLS,
+    build_capability_client,
 )
-from app.intelligence.orchestration.tool_definitions import build_tools
 from app.salesforce.token_storage import load_tokens
 
 load_dotenv()
 
 _CACHE_PATH = Path("data") / "metadata_cache.db"
 
-# ------------------------------------------------------------------
-# Tool subsets — what Claude can see per capability mode.
-# impact excludes get_source: topology is sufficient; source reading
-# adds cost with no benefit for blast-radius analysis.
-# ------------------------------------------------------------------
-_ALL_TOOLS = {
-    "find_dependencies", "find_references_to", "analyze_impact",
-    "find_by_name", "graph_health", "get_source",
-}
-_GRAPH_ONLY = _ALL_TOOLS - {"get_source"}
-
-# Registry: mode -> (prompt_builder, allowed_tool_names)
-# Adding a new capability = one new entry here + a new builder in system_prompt.py.
-CAPABILITY_REGISTRY: dict[str, tuple] = {
-    "qa":     (build_system_prompt, _ALL_TOOLS),
-    "apex":   (build_apex_prompt,   _ALL_TOOLS),
-    "soql":   (build_soql_prompt,   _ALL_TOOLS),
-    "impact": (build_impact_prompt, _GRAPH_ONLY),
-}
-
-VALID_MODES = list(CAPABILITY_REGISTRY.keys())
+# Re-exported above (CAPABILITY_REGISTRY, VALID_MODES, _ALL_TOOLS) so existing
+# import paths (ask_cli.CAPABILITY_REGISTRY etc.) keep resolving after the
+# capabilities.py extraction — same back-compat-alias trick cli.py used in the
+# ADR-013 naming refactor. The definitions now live in capabilities.py.
 
 
 # ------------------------------------------------------------------
@@ -120,22 +103,11 @@ async def _ask(question: str, *, mode: str = "qa", show_tools: bool = True) -> N
             f"Unknown mode {mode!r}. Valid modes: {', '.join(VALID_MODES)}"
         )
 
-    prompt_builder, allowed_tools = CAPABILITY_REGISTRY[mode]
     engine, graph, cache, org_key = await _load()
-
-    system_prompt = prompt_builder(graph)
-    all_schemas, all_handlers = build_tools(engine, graph, cache, org_key)
-
-    # Subset schemas and handlers to what this capability allows.
-    schemas = [s for s in all_schemas if s["name"] in allowed_tools]
-    handlers = {n: h for n, h in all_handlers.items() if n in allowed_tools}
-
-    client = ClaudeClient(system_prompt=system_prompt)
-    for tool_name, handler in handlers.items():
-        client.register_tool(
-            tool_name,
-            _announce(tool_name, handler) if show_tools else handler,
-        )
+    client, schemas = build_capability_client(
+        mode, engine, graph, cache, org_key,
+        handler_wrapper=_announce if show_tools else None,
+    )
 
     if mode != "qa":
         print(f"  [mode] {mode}", file=sys.stderr, flush=True)

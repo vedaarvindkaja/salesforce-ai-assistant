@@ -22,4 +22,4 @@ pytest-asyncio>=0.24.0
 
 aiosqlite
 
-networkx>=3.0
+networkx>=3.0mcp==X.Y.Z
