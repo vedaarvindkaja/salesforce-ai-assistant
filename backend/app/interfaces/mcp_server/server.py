@@ -29,6 +29,7 @@ Run directly for a local smoke test:
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -41,8 +42,24 @@ from app.intelligence.graph.storage import MetadataCache
 from app.intelligence.orchestration.capabilities import build_capability_client
 from app.salesforce.token_storage import load_tokens
 
-# Load .env (ANTHROPIC_API_KEY etc.) at import, same as ask_cli.py.
-load_dotenv()
+# Force UTF-8 on stdio. On Windows, Python may default stdout/stderr to a legacy
+# code page (cp1252), which mangles non-ASCII characters (· → Â·, — → â€") seen
+# in the Day-3 logs. stdout carries the MCP JSON-RPC stream and stderr carries
+# logs; both must be UTF-8 so tool answers (Apex, SOQL, punctuation) and log
+# lines survive intact. reconfigure() exists on the standard TextIO streams
+# (Python 3.7+); guard in case a host swapped them for something without it.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
+
+# Load .env (ANTHROPIC_API_KEY etc.). Resolve it relative to THIS file rather
+# than the cwd, because an MCP host (e.g. Claude Desktop) may launch us from an
+# arbitrary working directory (observed: C:\Windows\System32). find_dotenv-style
+# cwd search would miss backend/.env in that case.
+_BACKEND_DIR = Path(__file__).resolve().parents[3]  # .../backend
+load_dotenv(_BACKEND_DIR / ".env")
 
 # ------------------------------------------------------------------
 # Logging — STDERR ONLY.
@@ -55,10 +72,21 @@ logging.basicConfig(
 )
 logger = logging.getLogger("mcp_server")
 
-# Mirror ask_cli.py / cli.py exactly — the cache path is relative to backend/,
-# so the server MUST be launched with backend/ as the working directory.
-# (Client configs in Day 3-4 set this explicitly.)
-_CACHE_PATH = Path("data") / "metadata_cache.db"
+# Cache path resolution — MUST NOT depend on the process working directory.
+# An MCP host launches this server from its own cwd (Claude Desktop was observed
+# launching from C:\Windows\System32), and the `cwd` config field is not reliably
+# honoured. So we resolve the cache path in this order:
+#   1. SF_CACHE_PATH env var, if set (the host CAN set env reliably — that's how
+#      PYTHONPATH reaches us), else
+#   2. <backend>/data/metadata_cache.db, computed relative to THIS source file.
+# Both are cwd-independent. ask_cli.py keeps its cwd-relative Path("data")/... —
+# it's a short-lived process the user launches from backend/, so cwd is correct
+# there; only the host-launched server needs this hardening.
+_CACHE_PATH = (
+    Path(os.environ["SF_CACHE_PATH"])
+    if os.environ.get("SF_CACHE_PATH")
+    else _BACKEND_DIR / "data" / "metadata_cache.db"
+)
 
 # ------------------------------------------------------------------
 # The MCP server instance.
@@ -160,8 +188,8 @@ def _log_tool(name: str, handler):
 #      (same source of truth the CLI uses — no drift).
 #   3. Run the agentic loop NON-STREAMING (ask_collected) — MCP tool responses
 #      are single strings, not chunks.
-#   4. Append a compact cost/usage footer and log cost to stderr (Day 2
-#      deliverable: per-call cost reporting).
+#   4. Log per-call cost/usage to stderr ONLY (Day 2 deliverable: per-call cost
+#      reporting). NOT appended to the response — see the note at the log line.
 # Any unexpected error becomes a readable string rather than an opaque protocol
 # fault — a long-lived server must survive one bad call.
 # ------------------------------------------------------------------
@@ -181,17 +209,19 @@ async def _run_capability(mode: str, question: str) -> str:
         logger.exception("Capability %r failed", mode)
         return f"Error running {mode}: {exc}"
 
+    # Cost reporting is stderr-ONLY (the log line below). We deliberately do NOT
+    # append a footer to the returned string: an MCP host's model reads the tool
+    # result as content to interpret, not text to echo, so a footer is absorbed
+    # and rewritten away — invisible to the user, while still cluttering the
+    # model's context. Verified Day 3: the server sent the footer; Claude Desktop
+    # dropped it. stderr is the one channel cost survives, and the one we control.
     s = client.session
     logger.info(
-        "capability=%s turns=%d cost=$%.4f",
-        mode, len(s.turns), s.total_cost_usd,
+        "capability=%s turns=%d in=%d out=%d cost=$%.4f",
+        mode, len(s.turns), s.total_input_tokens, s.total_output_tokens,
+        s.total_cost_usd,
     )
-    footer = (
-        f"\n\n---\n[{mode}] {len(s.turns)} turn(s) · "
-        f"{s.total_input_tokens:,} in / {s.total_output_tokens:,} out · "
-        f"${s.total_cost_usd:.4f}"
-    )
-    return answer + footer
+    return answer
 
 
 # ------------------------------------------------------------------

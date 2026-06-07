@@ -2822,4 +2822,82 @@ Fingerprint check before trusting a copied file:
 - requirements.txt: mcp pinned this commit (was deferred from Day 1).
 - Option-B/ADR-014: still tool-pull. Live qa pulled get_source twice on a
   source-needing question — expected, not a discovery over-fetch. No trigger.
+
+## Week 11 Day 3 — Claude Desktop end-to-end (all 4 capabilities proven)
+
+### Outcome
+All four capabilities (qa/apex/soql/impact) verified end-to-end THROUGH Claude
+Desktop on Windows: correct tool routing, correct answers, clean stderr cost
+logging, encoding fixed. health + 4 capability tools all live in the host's
+connector list. Transport chain proven: host spawn → handshake → import
+resolution → graph load → agentic loop → response back through MCP.
+
+### Per-capability cost THROUGH MCP (first real baseline)
+  qa     2 turns  $0.0210
+  apex   3 turns  in=8452  out=1299  $0.0448
+  soql   4 turns  in=13465 out=1165  $0.0579
+  impact 5 turns  in=14793 out=1492  $0.0668
+Cost scales with turn count, which scales with graph-walking depth (impact
+traces transitive blast radius → most round-trips). All under the <$0.10/query
+Phase-1 gate. Slightly above direct-CLI numbers — the host adds a framing turn,
+expected.
+
+### ROOT CAUSE of the day: Claude Desktop does NOT honour `cwd`
+The config `cwd` field was silently ignored — the server launched from
+C:\Windows\System32, not backend/. This bit twice:
+  1. ModuleNotFoundError: No module named 'app' (import resolution).
+  2. Cache resolved to C:\Windows\System32\data\metadata_cache.db (not found).
+Fix — make the server cwd-INDEPENDENT, since we can't fix how the host launches:
+  - PYTHONPATH via the config `env` block (env IS honoured, unlike cwd) →
+    fixes `app` import.
+  - _BACKEND_DIR = Path(__file__).resolve().parents[3]; cache path resolves from
+    SF_CACHE_PATH env var, else <backend>/data/... relative to the source file.
+    .env also loaded from _BACKEND_DIR/.env (not cwd-searched). Fully cwd-free.
+  - ask_cli.py left untouched — short-lived, user launches from backend/, cwd
+    correct there. Only the host-launched server needed hardening.
+This is correct hardening regardless of host, not a Desktop-specific hack.
+
+### Cost footer → stderr-ONLY (Day-1 decision, now settled with data)
+The in-response cost footer does NOT survive the MCP host round-trip. Verified:
+the server sent the footer in the tool result (seen in mcp-server log payload),
+but Claude Desktop's model absorbed the tool result as content to interpret and
+rewrote the answer WITHOUT the footer — invisible to the user, while still
+cluttering the model's context. Removed the footer from the response string;
+kept the stderr `capability=... in=... out=... cost=$...` log line (reliable,
+in a channel we control). Cost reporting deliverable still met — just on the
+right channel.
+
+### UTF-8 forced on stdio
+Day-3 logs showed `·`→`Â·`, `—`→`â€"` — Windows defaulting stdout/stderr to
+cp1252. Forced sys.stdout/stderr.reconfigure(encoding="utf-8") at startup
+(guarded for hosts that swap the streams). Protects tool ANSWERS (Apex/SOQL/
+punctuation) the model reads, not just log cosmetics.
+
+### Windows / MSIX gotchas (for docs/mcp-server.md troubleshooting)
+- Claude Desktop is an MSIX install: logs + the config the app actually reads
+  live under
+  %LOCALAPPDATA%\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Roaming\Claude\
+  NOT the documented %APPDATA%\Claude\. "Edit Config" opens the real one.
+- Window-close does NOT reload config — app stays in the tray. Must fully Quit,
+  or force: Get-Process *claude* | Stop-Process -Force, then relaunch.
+- JSON is unforgiving: a hand-edit dropped the file's leading `{` →
+  "Extra data: line 1 column 13". Validate before restart:
+  python -c "import json; json.load(open(r'<path>', encoding='utf-8-sig'))"
+- Diagnosis path that worked: read mcp-server-<name>.log — it shows the exact
+  Python error (ModuleNotFoundError, then GraphLoadError) on each failed launch.
+
+### Verification
+- 304 tests still green (server changes don't touch tested paths).
+- All 4 capabilities answered correctly through the host; impact confirmed
+  TOPOLOGY-ONLY through MCP (the _GRAPH_ONLY subset correctly excluded
+  get_source — the one code path the other three don't exercise).
+
+### Carry-forward
+- Day 4: install Claude Code; configure + test Claude Code AND Augment AI.
+  Reuse the same cwd-independent server — only client configs differ. The
+  PYTHONPATH/SF_CACHE_PATH/UTF-8 hardening should make other hosts smoother.
+- Augment AI MCP config path still unknown — discovery step needed (NOTES Day 1).
+- Config saga is the seed of the Day-5 docs/mcp-server.md troubleshooting section.
+- Option-B/ADR-014: still tool-pull. impact pulled 5 turns of graph tools through
+  the host as expected — no repeated-discovery over-fetch pattern. No trigger.
 ---
