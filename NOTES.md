@@ -2900,4 +2900,70 @@ punctuation) the model reads, not just log cosmetics.
 - Config saga is the seed of the Day-5 docs/mcp-server.md troubleshooting section.
 - Option-B/ADR-014: still tool-pull. impact pulled 5 turns of graph tools through
   the host as expected — no repeated-discovery over-fetch pattern. No trigger.
+
+## Week 11 Day 4 — Cross-client verification (Claude Code + Augment AI)
+
+### Outcome
+All 3 target clients proven END-TO-END on a real capability (not just health):
+  - Claude Desktop  ✓ (Day 3)
+  - Claude Code     ✓ (today)
+  - Augment AI      ✓ (today)
+Same unchanged cwd-independent server across all three. Zero server code
+changes between clients — only per-host registration differs. The protocol-not-
+vendor thesis, proven: build to stdio MCP, hosts are interchangeable.
+
+### Claude Code
+- Installed via official native PowerShell installer (irm claude.ai/install.ps1
+  | iex). v2.1.168. Native installer — no Node needed (npm method deprecated 2026).
+  Binary → %USERPROFILE%\.local\bin\claude.exe.
+- PATH gotcha: installer added .local\bin to USER PATH (registry) but VS Code's
+  integrated terminal caches the env from when VS Code launched — `claude` not
+  found until VS Code FULLY restarted (reopening just the terminal panel is not
+  enough). Verified binary worked via full path before fixing PATH.
+- Registered: `claude mcp add salesforce-metadata-graph --scope user --env
+  PYTHONPATH=... --env SF_CACHE_PATH=... -- <python> -m
+  app.interfaces.mcp_server.server`. Stored in ~/.claude.json. Same env-var
+  shape as Desktop — cwd-independence meant it dropped straight in.
+- `claude mcp list` → ✓ Connected. health + impact both correct through the
+  interactive `claude` session. Host model: Opus 4.8 (its choice). Routed
+  correctly to analyze_deployment_impact; answer topology-only as designed.
+- Login: chose "Claude account with subscription" (Pro) for Claude Code's OWN
+  model usage. Distinct from the server's internal Sonnet calls (billed to the
+  project ANTHROPIC_API_KEY / $5 credits). Two independent billing layers —
+  noted for open-core economics (who pays for server inference = Phase-2 Q).
+
+### Augment AI
+- MCP config path (the Day-1 unknown), resolved: Augment panel → Settings →
+  Integrations → MCP Servers → "Import from JSON" button. Pasted the same
+  mcpServers JSON (command/args/env). Augment keeps env vars in their own
+  section, so PYTHONPATH/SF_CACHE_PATH carry cleanly.
+- Result: list shows "● salesforce-metadata-graph (5) tools" — green, all 5
+  tools discovered, connected on import. health + impact both correct through
+  an Augment AGENT thread (MCP tools are an Agent feature, not Chat/Completions).
+- "AUGMENT: SYNCING PERMISSION NEEDED" banner was about codebase indexing, NOT
+  MCP — MCP connected & ran fine regardless. The Day-1 auth worry was a non-issue.
+- Augment's own docs caveat (not all servers model-compatible) did not bite —
+  full capability path worked.
+
+### Why this all "just worked" on clients 2 & 3
+The Day-3 hardening (PYTHONPATH for import resolution, file-relative/SF_CACHE_PATH
+for the cache, UTF-8 stdio) was the correct host-independent fix, not a Desktop
+patch. Clients 2 and 3 each took one registration step and connected first try.
+The pain was all Day 3 (one host); the generality paid off here.
+
+### Cross-client config reference (for docs/mcp-server.md, Day 5)
+  Claude Desktop: claude_desktop_config.json (MSIX path), cwd+env block.
+  Claude Code:    claude mcp add ... --env ... -- <cmd>  (→ ~/.claude.json)
+  Augment AI:     Settings → MCP Servers → Import from JSON (env in own section)
+All three consume the same command/args/env triple.
+
+### Carry-forward
+- Day 5: docs/mcp-server.md (install + all-3-client config + troubleshooting:
+  the cwd/PYTHONPATH issue, MSIX log paths, JSON pitfalls, VS-Code-terminal PATH
+  cache, full-quit-to-reload). README update. Stale ROADMAP (5 caps + Cursor)
+  → fix to 4 caps + the actual 3 clients.
+- Consider committing a docs/examples/claude_desktop_config.example.json with
+  placeholder paths (canonical example + backup).
+- Option-B/ADR-014: still tool-pull. No new signal — clients just relay tool
+  calls; the loop behaviour is unchanged from Day 3. No trigger.
 ---
