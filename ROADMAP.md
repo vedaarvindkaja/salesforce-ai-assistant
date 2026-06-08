@@ -800,26 +800,26 @@ regression harness rather than a general-purpose eval framework.
 
 #### Week 11 — MCP server (15 hours)
 
-**Goal:** Expose the 5 capabilities via MCP protocol.
+**Goal:** Expose the developer capabilities via MCP protocol. (Reconciled: 4 capabilities, not 5 — debug-log parked to Week 12 since Week 9. See actuals below.)
 
 **Day 1-2 (5 hours)** — MCP server scaffolding
-- Use Anthropic's MCP Python SDK
+- Use the official MCP Python SDK (`mcp` package, modelcontextprotocol/python-sdk)
 - `interfaces/mcp_server/server.py`
 - Implement stdio transport
 - Server lifecycle management
 
 **Day 3-4 (5 hours)** — Tool exposure
-- Map 5 capabilities to MCP tools
+- Map capabilities to MCP tools
 - Each tool has clear schema for inputs/outputs
 - Handle errors gracefully
 - Cost reporting per tool call
 
 **Day 5 (3 hours)** — Testing with Claude Desktop
 - Configure MCP server in Claude Desktop
-- Test all 5 capabilities through Desktop
+- Test all capabilities through Desktop
 - Verify performance and reliability
 
-**Day 6 (1 hour)** — Testing with Cursor and Claude Code
+**Day 6 (1 hour)** — Testing with Claude Code and Augment AI
 - Configure for both
 - Verify cross-compatibility
 
@@ -830,13 +830,37 @@ regression harness rather than a general-purpose eval framework.
 
 **Deliverables:**
 - ✅ Working MCP server using stdio transport
-- ✅ All 5 capabilities accessible via MCP
-- ✅ Tested with Claude Desktop, Cursor, Claude Code
+- ✅ All 4 capabilities accessible via MCP
+- ✅ Tested with Claude Desktop, Claude Code, Augment AI
 - ✅ Installation documentation
 - ✅ Ready for open-source release
 
----
+**Week 11 — actuals (reconciled):**
+Ran in 5 days, not the planned 7. MCP server built as a thin transport over the
+existing orchestration (capabilities.py shared with the CLI) — not a reimplementation.
 
+- Day 1: non-streaming `ask_collected()` on ClaudeClient + FastMCP stdio scaffold
+  (lazy graph load, health tool).
+- Day 2: 4 capability tools (metadata_qa/explain_apex/generate_soql/
+  analyze_deployment_impact) over ask_collected; extracted orchestration/
+  capabilities.py as the shared CLI+MCP wiring (single source of truth for the
+  CAPABILITY_REGISTRY; ADR-013 discipline). Cost reporting.
+- Day 3: Claude Desktop — all 4 proven end-to-end. Hard-won: MCP hosts don't
+  honour `cwd`, so hardened the server to be cwd-independent (PYTHONPATH for
+  imports, SF_CACHE_PATH/file-relative for the cache, UTF-8 stdio). Cost footer
+  moved to stderr-only (hosts strip in-response footers).
+- Day 4: Claude Code (native installer) + Augment AI (Import-from-JSON) — same
+  unchanged server, both proven on a real capability.
+- Day 5: docs/mcp-server.md (install + 3-client config + troubleshooting);
+  ROADMAP reconciled. README rewrite deferred to Week 14 (its scheduled polish
+  slot) — repo README still reflects Week 4 state; fix before any public link.
+
+4 capabilities, not 5: debug-log analysis still parked (needs a log parser,
+2-3 days) → Week 12. No stubs exposed.
+Test targets: Cursor → Augment AI (enterprise/Salesforce fit; already installed).
+Tests unchanged at 304 unit + 20 semantic.
+
+---
 #### Week 12 — REST API + auth flow (15 hours)
 
 **Goal:** Build REST API for VS Code extension to consume.
@@ -940,6 +964,10 @@ regression harness rather than a general-purpose eval framework.
 - Architecture diagram
 - Feature list with examples
 - Installation: MCP server + VS Code extension
+- RECONCILE STALENESS (deferred from Week 11): README frozen at Week 4 —
+  update capability count (4, not 5), Cursor→Augment AI, "what's working today"
+  through current state, tech-stack "coming up" → built, roadmap checklist,
+  link docs/mcp-server.md
 
 **Day 3 (3 hours)** — API documentation
 - Detailed API reference

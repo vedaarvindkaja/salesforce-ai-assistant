@@ -2966,4 +2966,55 @@ All three consume the same command/args/env triple.
   placeholder paths (canonical example + backup).
 - Option-B/ADR-014: still tool-pull. No new signal — clients just relay tool
   calls; the loop behaviour is unchanged from Day 3. No trigger.
+
+## Week 11 Day 5 — Documentation + week-end reconciliation
+
+### What shipped
+- `docs/mcp-server.md` — the MCP server install & config guide. Covers: the 5
+  exposed tools (health + 4 capabilities), prerequisites (Python 3.11+, populated
+  cache, ANTHROPIC_API_KEY), the cwd-independence rationale, per-client config for
+  all 3 hosts (Claude Desktop / Claude Code / Augment AI), verification via health,
+  cost reporting (stderr, two billing layers), and a troubleshooting section that
+  is a direct distillation of the Day 3-4 failures (No module named 'app' →
+  PYTHONPATH; cache-not-found → SF_CACHE_PATH; MSIX log path; JSON validation;
+  VS Code terminal PATH cache; full-quit-to-reload; UTF-8 garbling; host/model
+  compatibility differences). Paths written as placeholders for public/open-core.
+- ROADMAP reconciled (Option A — fix errors inline + append actuals, same as
+  Weeks 9/10): Week 11 goal 5→"developer capabilities (4, debug-log parked)";
+  SDK name corrected to the official `mcp` package; Cursor→Augment AI in
+  deliverables and Definition-of-Done; "Week 11 actuals" block appended; DoD
+  MCP line checked off.
+
+### Decision: README rewrite DEFERRED to Week 14
+README is frozen at Week 4 state (says "9 REST endpoints, 19 tests, coming soon:
+metadata graph"). Considered updating now; deferred deliberately. Reasoning:
+Week 14 Day 2 already schedules the full public-facing README polish (hero,
+screenshots, quick start, full feature list) when the VS Code extension + demo
+exist. A heavy rewrite now would be redone in 3 weeks. Prior weeks correctly
+skipped README updates because nothing public existed; Week 11 is the first
+public artifact, so the ONLY real risk is the repo's public face misrepresenting
+the MCP server. Mitigation: don't share the repo link before Week 14, and a
+10-min "remove contradictions" touch is available if that changes. Tracked in
+two places: Week 11 actuals (what happened) + a new Week 14 Day 2 bullet (what
+to do). Not silently dropped.
+
+### Capability count clarified (recurring reconciliation)
+docs say 4 capabilities, debug-log noted as planned-not-stubbed. Considered
+building the 5th today; declined — it needs a real log parser (~2-3 days), is
+scoped for Week 12, and cramming a thin version onto a docs day breaks the
+no-stubs decision. Four graph-exercising capabilities remains the stronger
+portfolio story. Held the line.
+
+### Shell note
+Hit "'Copy-Item' is not recognized" — terminal was cmd.exe (bare `D:\...>`),
+not PowerShell (`PS D:\...>`). All project command blocks are PowerShell; run
+`powershell` first, or open a PowerShell terminal via the VS Code terminal
+dropdown. Fingerprint for future-me: no `PS` prefix = wrong shell.
+
+### Carry-forward
+- README full rewrite → Week 14 Day 2 (explicit bullet added).
+- docs/examples/claude_desktop_config.example.json (placeholder paths) — nice-to-
+  have, deferred; the config block is already in docs/mcp-server.md.
+- Option-B/ADR-014: still tool-pull. Documentation day — no new tool-call
+  evidence. No trigger.
 ---
