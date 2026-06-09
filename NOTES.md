@@ -3064,4 +3064,23 @@ readiness). Reuses Week-4 OAuth state via the loader's token check.
 - Live-verified against the real 57-node graph through Claude over SSE.
 - Thin pattern proven: apex/soql/impact on Day 2 are one _capability_response
   call each; debug-log (if it survives the Day-3 gate) is one more route.
+
+## Week 12 Day 2 — REST completion: all 4 capability routes + /graph + tests
+- capabilities.py: apex-explain / soql-generate / deployment-impact added — each
+  one _capability_response(mode,...) wrapper over the Day-1 seam. impact's
+  _GRAPH_ONLY subset handled in build_capability_client (routes stay uniform).
+- routes/graph.py: GET /api/v1/graph — deterministic GraphSummary (node/edge
+  counts + per-type breakdowns) from MetadataGraph.stats(). No Claude/SSE/cost;
+  own "graph" OpenAPI tag; behind get_graph_engine (503 if absent).
+- main.py: graph router wired (imported as graph_routes to avoid shadowing the
+  lifespan's local `graph`).
+- Tests: test_rest_capabilities.py rewritten — parametrized 503 (4) +
+  streaming/mode-routing (4) + empty-question 422 (1) = 9. test_rest_graph.py
+  new — 503 + counts (2). Suite 312 -> 320.
+- docs/examples/claude_desktop_config.example.json added (placeholder paths;
+  mirrors docs/mcp-server.md so they can't drift).
+- Error handling covered: 422 malformed (Pydantic), 503 graph-absent
+  (dependency), loop/API failure -> SSE 'error' event.
+- Seam confirmed: 5th capability (debug-log, if it clears the Day-3 gate) is one
+  registry entry + one route. REST = Week 12 committed deliverable: LANDED GREEN.
 ---

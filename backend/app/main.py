@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.interfaces.rest_api.routes import accounts, auth, capabilities
+from app.interfaces.rest_api.routes import graph as graph_routes
 from app.intelligence.graph.bootstrap import GraphLoadError, load_graph
 from app.salesforce.mocks.rest_mock import MockSalesforceClient
 from app.salesforce.rest_api import RestAPIClient
@@ -29,13 +30,13 @@ async def lifespan(app: FastAPI):
 
       1. The Salesforce REST client (mock or real) for the account endpoints
          (unchanged from Week 4).
-      2. The metadata graph for the capability endpoints (ADR-015), loaded
-         eagerly but TOLERANTLY: the load is attempted once at startup so request
-         handlers don't pay for it, but a failure must NOT crash the app. In mock
-         mode / a fresh checkout there are no tokens or cache, and the account
-         endpoints plus the test suite must still come up. On failure we store
-         None and let the capability routes return a clean 503 at request time
-         (via get_graph_engine).
+      2. The metadata graph for the capability + graph endpoints (ADR-015),
+         loaded eagerly but TOLERANTLY: the load is attempted once at startup so
+         request handlers don't pay for it, but a failure must NOT crash the app.
+         In mock mode / a fresh checkout there are no tokens or cache, and the
+         account endpoints plus the test suite must still come up. On failure we
+         store None and let the capability/graph routes return a clean 503 at
+         request time (via get_graph_engine).
 
     Note: the graph load is independent of USE_MOCK_DATA — it reads stored OAuth
     tokens + the local cache directly, so a real 57-node graph loads even when
@@ -100,6 +101,7 @@ app.add_middleware(
 app.include_router(accounts.router)
 app.include_router(auth.router)
 app.include_router(capabilities.router)
+app.include_router(graph_routes.router)
 
 
 @app.get("/health")

@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "salesforce-metadata-graph": {
+      "command": "<python>",
+      "args": ["-m", "app.interfaces.mcp_server.server"],
+      "cwd": "<backend>",
+      "env": {
+        "PYTHONPATH": "<backend>",
+        "SF_CACHE_PATH": "<backend>/data/metadata_cache.db"
+      }
+    }
+  }
+}

@@ -8,9 +8,8 @@ self-describing for the Week-13 VS Code extension to generate a typed client
 from.
 
 Each public route is a thin wrapper that delegates to one private helper
-(``_capability_response``). Day 1 ships the qa route; apex/soql/impact follow on
-Day 2 via the same helper, and the parked 5th capability (debug-log) later drops
-in as one more wrapper.
+(``_capability_response``). The parked 5th capability (debug-log) later drops in
+as one more wrapper — no new plumbing.
 
 Streaming: REST is the STREAMING consumer of the orchestration loop (the mirror
 of the MCP server's collected consumer). Claude's text chunks are streamed to
@@ -21,7 +20,9 @@ instead of burning the full token cost).
 
 Graph availability is gated by ``get_graph_engine`` BEFORE streaming starts: a
 missing graph is a 503 (server-side readiness), not a 401 — the caller can't fix
-it by re-authenticating.
+it by re-authenticating. The ``impact`` mode's restricted tool subset
+(``_GRAPH_ONLY``) is applied inside ``build_capability_client`` via the registry,
+so the routes stay uniform.
 """
 from __future__ import annotations
 
@@ -90,3 +91,30 @@ async def metadata_qa(
 ) -> EventSourceResponse:
     """Q&A over the org's metadata graph. Streams the answer as SSE."""
     return _capability_response("qa", body.question, bundle)
+
+
+@router.post("/apex-explain")
+async def apex_explain(
+    body: CapabilityRequest,
+    bundle=Depends(get_graph_engine),
+) -> EventSourceResponse:
+    """Explain Apex with graph-aware dependency context. Streams as SSE."""
+    return _capability_response("apex", body.question, bundle)
+
+
+@router.post("/soql-generate")
+async def soql_generate(
+    body: CapabilityRequest,
+    bundle=Depends(get_graph_engine),
+) -> EventSourceResponse:
+    """Generate SOQL grounded in the org's schema graph. Streams as SSE."""
+    return _capability_response("soql", body.question, bundle)
+
+
+@router.post("/deployment-impact")
+async def deployment_impact(
+    body: CapabilityRequest,
+    bundle=Depends(get_graph_engine),
+) -> EventSourceResponse:
+    """Assess deployment blast-radius from the dependency graph. Streams as SSE."""
+    return _capability_response("impact", body.question, bundle)
