@@ -3017,4 +3017,51 @@ dropdown. Fingerprint for future-me: no `PS` prefix = wrong shell.
   have, deferred; the config block is already in docs/mcp-server.md.
 - Option-B/ADR-014: still tool-pull. Documentation day — no new tool-call
   evidence. No trigger.
+
+## Week 12 Day 1 — REST foundation: shared graph loader + decisions locked
+
+### ADR-015 — Shared graph loader (intelligence/graph/bootstrap.py)
+Context: tokens→cache→build→engine existed in 3 hand-copied variants
+(ask_cli._load, cli._load_graph, MCP _get_engine); REST would be the 4th.
+Drift risk — e.g. the cwd-independence fix lived only in MCP.
+Decision: extract a PURE, timing-agnostic load_graph(cache_path=None) ->
+(engine, graph, cache, org_key) raising a shared GraphLoadError. Lifecycle
+stays at each edge: CLI per-invocation/SystemExit, MCP lazy+module-cache/
+error-string, REST eager-in-lifespan/503. Cache path resolved cwd-independently
+(SF_CACHE_PATH or file-relative).
+Consequences: REST consumes it now. MCP/CLI keep their loaders this week and
+migrate in the Day-6 buffer (behaviour-preserving, suite-green) so proven
+surfaces aren't disturbed mid-deliverable. GraphLoadError still also defined in
+server.py; the MCP migration deletes the local copy. Status: Accepted.
+
+### ADR-016 — REST capability surface: four explicit routes
+Decision: four named routes (/api/v1/metadata-qa, /apex-explain, /soql-generate,
+/deployment-impact), each a thin wrapper over one shared internal handler.
+5th capability (debug-log) drops in as one more route.
+Rationale: typed/discoverable client surface for the Week-13 extension;
+per-capability clarity in /docs; near-zero cost via build_capability_client.
+Mode-parametrized single route rejected (opaque, validation-in-body, weaker
+generated client). Consequence: route shape is now a public compatibility
+surface. Status: Accepted.
+
+### Auth gating: precondition (not caller auth — API keys stay Phase-2).
+Missing graph → 503, not 401 (consumer can't fix by re-authing; it's server
+readiness). Reuses Week-4 OAuth state via the loader's token check.
+
+### SSE: sse-starlette (heartbeat over quiet tool-turns + disconnect cancel). Pinned.
+
+### Shipped: bootstrap.py + GraphLoadError; 5 hermetic tests (precondition trio
++ happy path + env override). Pure addition; suite green.
+
+### Shipped (Step 2): qa endpoint end-to-end
+- main.py lifespan: eager-but-tolerant load_graph -> app.state.graph_bundle
+  (None on failure, no crash — keeps account endpoints + tests up).
+- dependencies.get_graph_engine: 503 when bundle is None (precondition gate).
+- routes/capabilities.py: POST /api/v1/metadata-qa. Four-routes-one-handler seam
+  (_capability_response); SSE via EventSourceResponse; REST = STREAMING consumer
+  of ask() (mirror of MCP's collected consumer).
+- 3 hermetic route tests (503 / streams chunks / 422 empty question).
+- Live-verified against the real 57-node graph through Claude over SSE.
+- Thin pattern proven: apex/soql/impact on Day 2 are one _capability_response
+  call each; debug-log (if it survives the Day-3 gate) is one more route.
 ---
