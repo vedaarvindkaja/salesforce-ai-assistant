@@ -3181,6 +3181,16 @@ readiness). Reuses Week-4 OAuth state via the loader's token check.
   honesty path; the Day-3 Opportunity-is-Flow-driven finding as an eval).
 - Result: __/5 passing, ~$____ run.
 
+- Result: 5/5 passing, ~$0.16 run (per-case $0.022-$0.044, 2-3 turns).
+
+### GOTCHA (future-me): evals/fixtures/*.log was swept by the repo-wide *.log
+  ignore -> the Day-5 commit silently dropped both fixtures (git add skips
+  ignored paths; the "Use -f" hint + an 11-file commit were the tells). Fix:
+  evals/fixtures/.gitignore with `!*.log` (deeper .gitignore overrides root;
+  dir isn't excluded so re-inclusion is allowed). Diagnose with
+  `git check-ignore -v <path>`. Lesson: never chain a stop-gate check into the
+  same command block as the commit it's gating.
+
 ### Naming: REST route = /api/v1/debug-log-analysis (noun, like deployment-impact).
   ROADMAP's stale "debug-log-analyze" -> reconcile Day 6.
 ---

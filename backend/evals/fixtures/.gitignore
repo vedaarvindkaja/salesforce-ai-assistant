@@ -1,0 +1,2 @@
+# Synthetic PII-free eval fixtures - track despite repo-wide *.log ignore.
+!*.log
