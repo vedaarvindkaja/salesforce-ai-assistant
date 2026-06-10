@@ -2,9 +2,11 @@
 
 A case specifies:
   - query: the natural-language question sent to the capability
-  - mode: which capability handles it (qa/apex/soql/impact)
+  - mode: which capability handles it (qa/apex/soql/impact/debuglog)
   - required: strings that MUST appear in the output (grounding + structure)
   - forbidden: strings that must NOT appear (known failure modes)
+  - log: for debuglog mode, the path to the debug log (ADR-017: debuglog takes a
+    log REFERENCE, not a bare question); None for the question-shaped modes.
   - description: what this case is testing (for the report)
 
 Assertions are substring checks on the full AI output — coarse but fast,
@@ -20,3 +22,4 @@ class EvalCase:
     mode: str
     required: list[str] = field(default_factory=list)
     forbidden: list[str] = field(default_factory=list)
+    log: str | None = None

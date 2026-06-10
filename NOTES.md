@@ -3148,4 +3148,39 @@ readiness). Reuses Week-4 OAuth state via the loader's token check.
 ### Day 5: expose debuglog on CLI/MCP/REST + debuglog eval cases (20->25) +
   cross-surface proof. The registry entry already propagates the capability;
   Day 5 wires the 3 transports + the DebugLogRequest REST shape.
+
+## Week 12 Day 5 — debug-log exposed on all 3 surfaces + evals (20 -> 25)
+
+### Cross-surface wiring — one registry entry, three transports
+- compose_debuglog_input(log_path, question) in capabilities.py: SINGLE source
+  for turning a log reference into the capability message (ADR-017 asymmetry).
+  CLI/MCP/REST all route through it — no per-surface framing.
+- CLI: ask_cli --log <path>; _ask composes for mode=debuglog (guard fires before
+  _load -> missing --log fails fast/free). question stays required.
+- MCP: diagnose_debug_log(log_path, question="") -> _run_debuglog ->
+  _run_capability("debuglog", ...). Named distinctly from the internal
+  analyze_debug_log graph tool (host-facing vs loop-internal don't collide in
+  stderr). Tools 5 -> 6.
+- REST: POST /api/v1/debug-log-analysis, DebugLogRequest{log_path, question?}
+  (distinct from CapabilityRequest as ADR-017 predicted); reuses the
+  _capability_response SSE seam. Routes 4 -> 5. No main.py change.
+
+### Unit tests (hermetic): 341 -> 344
+- test_ask_cli (+3): --log parse / default None / debuglog-without-log SystemExit.
+- test_debuglog_correlate (+2): compose path-only + path+question.
+- test_rest_capabilities (+3): debuglog 503 / streams (mode + path in message) /
+  422 missing log_path.
+
+### Semantic evals: 20 -> 25
+- EvalCase gains a `log` field; eval_runner forwards it to _ask.
+- evals/cases/debuglog_cases.py: 5 cases over 2 fixtures.
+- evals/fixtures/ (format-valid real SF log STRUCTURE, synthetic PII-free
+  ids/data; committed because synthetic, unlike the gitignored real captures):
+  debuglog_case_exception.log (Case framework + DmlException, names real graph
+  nodes -> grounding path) + debuglog_flow_only.log (Opportunity Flow-only ->
+  honesty path; the Day-3 Opportunity-is-Flow-driven finding as an eval).
+- Result: __/5 passing, ~$____ run.
+
+### Naming: REST route = /api/v1/debug-log-analysis (noun, like deployment-impact).
+  ROADMAP's stale "debug-log-analyze" -> reconcile Day 6.
 ---

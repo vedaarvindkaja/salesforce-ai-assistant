@@ -8,9 +8,11 @@ No live Claude API and no dependence on this machine's tokens/cache:
   - get_graph_engine is overridden via FastAPI dependency_overrides to inject a
     dummy bundle when we want to bypass the 503 gate.
 
-Parametrized across all four routes so every capability proves the same
-contract: 503 when the graph is absent, and a clean SSE stream (with the correct
-mode routed into build_capability_client) when it's present.
+Parametrized across the four question-shaped routes so every capability proves
+the same contract: 503 when the graph is absent, and a clean SSE stream (with
+the correct mode routed into build_capability_client) when it's present. The
+debug-log route (Week 12) takes a different body (DebugLogRequest) so it has its
+own trio.
 """
 import pytest
 from fastapi.testclient import TestClient
@@ -94,3 +96,62 @@ def test_metadata_qa_rejects_empty_question():
     finally:
         app.dependency_overrides.clear()
     assert resp.status_code == 422  # Pydantic min_length=1
+
+
+# ------------------------------------------------------------------
+# debug-log route (Week 12 Day 5) — DebugLogRequest{log_path, question?}
+# ------------------------------------------------------------------
+
+def test_debuglog_503_when_graph_absent():
+    with TestClient(app) as client:
+        resp = client.post("/api/v1/debug-log-analysis", json={"log_path": "run.log"})
+    assert resp.status_code == 503
+    assert "metadata graph not loaded" in resp.json()["detail"]
+
+
+def test_debuglog_streams_chunks(monkeypatch):
+    app.dependency_overrides[get_graph_engine] = lambda: _FAKE_BUNDLE
+    captured = {}
+
+    class _FakeClient:
+        async def ask(self, question, tools=None):
+            # The composed message must carry the log path into the loop.
+            captured["question"] = question
+            yield "Root "
+            yield "cause."
+
+    def _fake_build(m, engine, graph, cache, org_key, *, handler_wrapper=None):
+        captured["mode"] = m
+        return _FakeClient(), []
+
+    monkeypatch.setattr(
+        "app.interfaces.rest_api.routes.capabilities.build_capability_client",
+        _fake_build,
+    )
+
+    try:
+        with TestClient(app) as client:
+            resp = client.post(
+                "/api/v1/debug-log-analysis",
+                json={"log_path": "run.log", "question": "why did it fail?"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert resp.status_code == 200
+    assert captured["mode"] == "debuglog"  # route routed the debuglog capability
+    assert "run.log" in captured["question"]  # composed message carries the path
+    assert "Root " in resp.text
+    assert "done" in resp.text
+
+
+def test_debuglog_rejects_missing_log_path():
+    # Inject a bundle so the ONLY possible failure is body validation (422),
+    # not the 503 gate. log_path is required, so an empty body is invalid.
+    app.dependency_overrides[get_graph_engine] = lambda: _FAKE_BUNDLE
+    try:
+        with TestClient(app) as client:
+            resp = client.post("/api/v1/debug-log-analysis", json={})
+    finally:
+        app.dependency_overrides.clear()
+    assert resp.status_code == 422

@@ -155,3 +155,26 @@ async def test_announce_passes_input_through():
     wrapped = ask_cli._announce("find_by_name", fake_handler)
     await wrapped({"query": "Opp", "extra": 1})
     assert seen == {"query": "Opp", "extra": 1}
+
+
+# ------------------------------------------------------------------
+# debuglog input — --log flag + the log-reference guard (Week 12 Day 5)
+# ------------------------------------------------------------------
+
+def test_parser_log_flag():
+    args = ask_cli._build_parser().parse_args(
+        ["q", "--mode", "debuglog", "--log", "run.log"]
+    )
+    assert args.log == "run.log"
+
+
+def test_parser_log_defaults_none():
+    args = ask_cli._build_parser().parse_args(["q"])
+    assert args.log is None
+
+
+def test_ask_debuglog_requires_log():
+    import asyncio
+    # The --log guard fires before _load(), so this never touches the cache.
+    with pytest.raises(SystemExit):
+        asyncio.run(ask_cli._ask("q", mode="debuglog", log=None))

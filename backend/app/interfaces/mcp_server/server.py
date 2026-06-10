@@ -12,15 +12,16 @@ Key differences from ask_cli.py (the other AI surface):
   launches it once and sends many tool calls over its lifetime. So the graph
   is loaded ONCE and cached (see _get_engine), not rebuilt per call.
 - ask_cli STREAMS to stdout. MCP tool responses are SINGLE STRINGS, so the
-  capability tools (Day 2) will call ClaudeClient.ask_collected(), not ask().
+  capability tools call ClaudeClient.ask_collected(), not ask().
 - stdout is RESERVED for the MCP JSON-RPC protocol. Nothing in this process
   may print to stdout except the MCP framework itself. All diagnostics go to
   stderr (logging is configured to stderr below). A stray print() to stdout
   corrupts the protocol stream and breaks the client connection.
 
-Day 1 scope: scaffold only — lazy graph bootstrap + a single `health` tool
-that proves the transport end-to-end. The four capability tools (qa/apex/
-soql/impact) are wired on Day 2.
+Tools: health + five capabilities (metadata_qa / explain_apex / generate_soql /
+analyze_deployment_impact / diagnose_debug_log). The debug-log tool (Week 12)
+takes a log REFERENCE rather than a question (ADR-017) and is named distinctly
+from the internal analyze_debug_log graph tool the agentic loop calls.
 
 Run directly for a local smoke test:
     python -m app.interfaces.mcp_server.server
@@ -39,7 +40,10 @@ from mcp.server.fastmcp import FastMCP
 from app.intelligence.graph.builder import GraphBuilder
 from app.intelligence.graph.query import QueryEngine
 from app.intelligence.graph.storage import MetadataCache
-from app.intelligence.orchestration.capabilities import build_capability_client
+from app.intelligence.orchestration.capabilities import (
+    build_capability_client,
+    compose_debuglog_input,
+)
 from app.salesforce.token_storage import load_tokens
 
 # Force UTF-8 on stdio. On Windows, Python may default stdout/stderr to a legacy
@@ -179,7 +183,7 @@ def _log_tool(name: str, handler):
 
 
 # ------------------------------------------------------------------
-# Capability runner — the shared body of all four capability tools.
+# Capability runner — the shared body of the question-shaped capability tools.
 #
 # Each MCP capability tool is a thin wrapper that calls this with a fixed mode.
 # Flow:
@@ -188,8 +192,8 @@ def _log_tool(name: str, handler):
 #      (same source of truth the CLI uses — no drift).
 #   3. Run the agentic loop NON-STREAMING (ask_collected) — MCP tool responses
 #      are single strings, not chunks.
-#   4. Log per-call cost/usage to stderr ONLY (Day 2 deliverable: per-call cost
-#      reporting). NOT appended to the response — see the note at the log line.
+#   4. Log per-call cost/usage to stderr ONLY (per-call cost reporting). NOT
+#      appended to the response — see the note at the log line.
 # Any unexpected error becomes a readable string rather than an opaque protocol
 # fault — a long-lived server must survive one bad call.
 # ------------------------------------------------------------------
@@ -222,6 +226,18 @@ async def _run_capability(mode: str, question: str) -> str:
         s.total_cost_usd,
     )
     return answer
+
+
+async def _run_debuglog(log_path: str, question: str = "") -> str:
+    """Runner for the debug-log capability.
+
+    debuglog's input is a log REFERENCE, not a question (ADR-017), so it can't
+    use _run_capability directly. It composes the (path, question) into the
+    capability message via the SHARED helper (same framing the CLI and REST use)
+    and then routes through _run_capability with mode='debuglog'.
+    """
+    message = compose_debuglog_input(log_path, question or None)
+    return await _run_capability("debuglog", message)
 
 
 # ------------------------------------------------------------------
@@ -314,6 +330,31 @@ async def analyze_deployment_impact(question: str) -> str:
         question: the change to analyse (name the component).
     """
     return await _run_capability("impact", question)
+
+
+@mcp.tool()
+async def diagnose_debug_log(log_path: str, question: str = "") -> str:
+    """Diagnose a Salesforce Apex debug log: identify what failed (or what ran)
+    and explain the likely root cause, grounded in the metadata graph.
+
+    Reads the log SERVER-SIDE, correlates the Apex units that executed (and any
+    exception) to the dependency graph, and returns a structured root-cause
+    analysis — what failed, where it sits in the graph, the likely cause, and
+    what to check. The raw log is never sent to the model; only the structured
+    correlation is (so a large log doesn't blow the context window).
+
+    Use when you have a debug log from a failed or suspicious transaction and
+    want to know which class/trigger is implicated and why (e.g. a DML exception
+    on insert, an unexpected trigger recursion). If the log shows only
+    Flow/Workflow automation, it will say the failure isn't in the Apex graph
+    rather than invent an Apex cause.
+
+    Arguments:
+        log_path: path to the debug log file, readable by the SERVER process
+                  (absolute, or relative to the backend dir).
+        question: optional specific question to focus the analysis.
+    """
+    return await _run_debuglog(log_path, question)
 
 
 # ------------------------------------------------------------------

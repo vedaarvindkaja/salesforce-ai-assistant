@@ -8,6 +8,7 @@ selects which capability lens Claude applies:
     python -m app.interfaces.ask_cli --mode apex "question"   # Apex explanation
     python -m app.interfaces.ask_cli --mode soql "question"   # SOQL generation
     python -m app.interfaces.ask_cli --mode impact "question" # Deployment impact
+    python -m app.interfaces.ask_cli --mode debuglog --log run.log "why?"  # Debug-log root cause
 
 The per-mode wiring (which prompt builder + which tool subset) lives in
 orchestration/capabilities.py, shared with the MCP server so the capability
@@ -22,6 +23,11 @@ API, costs money, streams, and can fail with API errors.
 Thin entry-point wrappers (ask_apex.py, ask_soql.py, ask_impact.py) call
 main(default_mode=...) so each capability has a clean module name for the
 portfolio, without duplicating any logic here.
+
+debuglog is the one mode whose input is a log REFERENCE, not a bare question
+(ADR-017): it takes --log <path> and the positional question becomes the
+optional focus. The (path, question) -> message framing lives ONCE in
+capabilities.compose_debuglog_input, shared with the MCP and REST surfaces.
 
 Tool calls are announced on stderr (ADR-014 observability). Suppress with --quiet.
 """
@@ -42,6 +48,7 @@ from app.intelligence.orchestration.capabilities import (
     VALID_MODES,
     _ALL_TOOLS,
     build_capability_client,
+    compose_debuglog_input,
 )
 from app.salesforce.token_storage import load_tokens
 
@@ -97,11 +104,29 @@ def _announce(name: str, handler):
 # Core ask flow
 # ------------------------------------------------------------------
 
-async def _ask(question: str, *, mode: str = "qa", show_tools: bool = True) -> None:
+async def _ask(
+    question: str,
+    *,
+    mode: str = "qa",
+    log: str | None = None,
+    show_tools: bool = True,
+) -> None:
     if mode not in CAPABILITY_REGISTRY:
         raise SystemExit(
             f"Unknown mode {mode!r}. Valid modes: {', '.join(VALID_MODES)}"
         )
+
+    # debuglog takes a log REFERENCE, not a bare question (ADR-017). Compose the
+    # message once via the shared helper so CLI/MCP/REST frame it identically.
+    # The check runs before _load so a missing --log fails fast and free.
+    if mode == "debuglog":
+        if not log:
+            raise SystemExit(
+                "--mode debuglog requires --log <path-to-debug-log>"
+            )
+        message = compose_debuglog_input(log, question)
+    else:
+        message = question
 
     engine, graph, cache, org_key = await _load()
     client, schemas = build_capability_client(
@@ -112,8 +137,8 @@ async def _ask(question: str, *, mode: str = "qa", show_tools: bool = True) -> N
     if mode != "qa":
         print(f"  [mode] {mode}", file=sys.stderr, flush=True)
 
-    print(f"\nQ: {question}\n")
-    async for chunk in client.ask(question, tools=schemas):
+    print(f"\nQ: {message}\n")
+    async for chunk in client.ask(message, tools=schemas):
         print(chunk, end="", flush=True)
     print("\n")
     print(client.session.summary(), file=sys.stderr)
@@ -137,6 +162,11 @@ def _build_parser(default_mode: str = "qa") -> argparse.ArgumentParser:
              f"Choices: {', '.join(VALID_MODES)}",
     )
     parser.add_argument(
+        "--log",
+        default=None,
+        help="path to a Salesforce debug log (required for --mode debuglog)",
+    )
+    parser.add_argument(
         "--quiet", "-q", action="store_true",
         help="don't announce which tools Claude calls",
     )
@@ -147,7 +177,9 @@ def main(default_mode: str = "qa") -> None:
     """Entry point. default_mode lets thin wrappers (ask_apex.py etc.) set
     their mode without duplicating any logic."""
     args = _build_parser(default_mode=default_mode).parse_args()
-    asyncio.run(_ask(args.question, mode=args.mode, show_tools=not args.quiet))
+    asyncio.run(
+        _ask(args.question, mode=args.mode, log=args.log, show_tools=not args.quiet)
+    )
 
 
 if __name__ == "__main__":

@@ -115,3 +115,23 @@ def build_capability_client(
             handler_wrapper(name, handler) if handler_wrapper else handler,
         )
     return client, schemas
+
+
+def compose_debuglog_input(log_path: str, question: str | None = None) -> str:
+    """Compose the user message for the debuglog capability from a log reference.
+
+    The other four capabilities take a {question} straight through to ask();
+    debuglog instead takes a log REFERENCE (ADR-017). This is the SINGLE place
+    that turns a (log_path, optional question) into the message Claude sees, so
+    the CLI, MCP server, and REST route don't each reinvent the framing —
+    same single-source discipline as CAPABILITY_REGISTRY above.
+
+    The debuglog system prompt instructs Claude to call analyze_debug_log with
+    the provided path FIRST; this message is what hands it that path. The path
+    is embedded verbatim — server-side resolution (cwd-independent) happens in
+    the tool handler (resolve_log_path), not here.
+    """
+    base = f"Analyze the Salesforce debug log at this path: {log_path}"
+    if question:
+        return f"{base}\n\nSpecific question to focus on: {question}"
+    return base

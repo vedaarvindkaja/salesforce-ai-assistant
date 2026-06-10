@@ -8,8 +8,9 @@ Usage:
     python -m evals.eval_runner                    # all capabilities
     python -m evals.eval_runner --mode impact      # one capability
     python -m evals.eval_runner --mode impact qa   # multiple
+    python -m evals.eval_runner --mode debuglog    # debug-log root-cause
 
-Cost: ~$0.035/case average. 20 cases ~ $0.70 per full run.
+Cost: ~$0.035/case average. 25 cases ~ $0.88 per full run.
 NOT included in the default pytest suite (live API calls, real cost).
 Run deliberately as a regression check, not on every commit.
 
@@ -27,6 +28,7 @@ import time
 from contextlib import redirect_stdout
 
 from evals.cases.apex_cases import CASES as APEX_CASES
+from evals.cases.debuglog_cases import CASES as DEBUGLOG_CASES
 from evals.cases.impact_cases import CASES as IMPACT_CASES
 from evals.cases.qa_cases import CASES as QA_CASES
 from evals.cases.soql_cases import CASES as SOQL_CASES
@@ -37,6 +39,7 @@ ALL_CASES: dict[str, list[EvalCase]] = {
     "apex": APEX_CASES,
     "soql": SOQL_CASES,
     "impact": IMPACT_CASES,
+    "debuglog": DEBUGLOG_CASES,
 }
 
 # Colour codes — degrade gracefully on terminals that don't support them
@@ -54,7 +57,11 @@ def _run_case(case: EvalCase) -> tuple[bool, str, list[str]]:
 
     buf = io.StringIO()
     with redirect_stdout(buf):
-        asyncio.run(_ask(case.query, mode=case.mode, show_tools=False))
+        # log is None for the question-shaped modes; for debuglog it carries the
+        # fixture path, which _ask composes into the message (ADR-017).
+        asyncio.run(
+            _ask(case.query, mode=case.mode, log=case.log, show_tools=False)
+        )
     output = buf.getvalue()
 
     failures: list[str] = []

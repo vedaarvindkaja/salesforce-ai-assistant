@@ -106,3 +106,23 @@ def test_build_capability_client_debuglog_exposes_tool():
     names = {s["name"] for s in schemas}
     assert "analyze_debug_log" in names
     assert "get_source" not in names
+
+
+# ------------------------------------------------------------------
+# compose_debuglog_input — the shared (path, question) -> message framing
+# (Week 12 Day 5). One source for how a log reference becomes a capability
+# message, used by the CLI, MCP server, and REST route.
+# ------------------------------------------------------------------
+
+def test_compose_debuglog_input_includes_path():
+    from app.intelligence.orchestration.capabilities import compose_debuglog_input
+    msg = compose_debuglog_input("/tmp/run.log")
+    assert "/tmp/run.log" in msg
+    assert "Specific question" not in msg
+
+
+def test_compose_debuglog_input_includes_question():
+    from app.intelligence.orchestration.capabilities import compose_debuglog_input
+    msg = compose_debuglog_input("/tmp/run.log", "why did the insert fail?")
+    assert "/tmp/run.log" in msg
+    assert "why did the insert fail?" in msg
