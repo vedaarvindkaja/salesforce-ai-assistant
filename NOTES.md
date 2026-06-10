@@ -3083,4 +3083,32 @@ readiness). Reuses Week-4 OAuth state via the loader's token check.
   (dependency), loop/API failure -> SSE 'error' event.
 - Seam confirmed: 5th capability (debug-log, if it clears the Day-3 gate) is one
   registry entry + one route. REST = Week 12 committed deliverable: LANDED GREEN.
+
+## Week 12 Day 3 — Capability 5 (debug-log): parser + GATE PASS
+
+### Step 0 — real-log capture (the gate's input)
+- Opportunity DML (Log1/Log2): Flow-only automation — ZERO METHOD_ENTRY,
+  apex_units empty -> would have FAILED the gate. Real finding: Opportunity is
+  Flow-driven, not Apex; wrong capture target, not a dead capability.
+- Re-captured from Case (Apex trigger-action framework): 19 METHOD_ENTRY,
+  apex_units = {Case_Trigger_Handler, TriggerHandler, CaseObjectTrigger}.
+
+### Parser — intelligence/debuglog/parser.py (pure: text -> events)
+- Generic tokenizer + typed extractors; unknown event types captured
+  generically (never crash the parse). Lean LogEvent + derived convenience
+  fields (code_line, apex_unit, apex_class_id) for core types only.
+- Handles header (api + categories), Execute-Anonymous source echo (skipped),
+  continuation lines (FATAL_ERROR stack, LIMIT_USAGE block). Verified against
+  all three real logs.
+- BONUS: METHOD_ENTRY/CONSTRUCTOR carry the ApexClass/Trigger Id (01p/01q) ->
+  Day-4 correlation can match on Id, not just name.
+- 10 hermetic tests (synthetic fixture, no org PII). Suite 320 -> 330.
+
+### GATE (locked pre-build) — PASS
+- Clause 1 (>=1 METHOD_ENTRY/EXCEPTION unit is a graph node): PASS.
+- Clause 2 (>=30% distinct apex_units are nodes): 100% (3/3) -> PASS.
+- scripts/debuglog_gate_check.py reuses load_graph + graph.all_nodes().
+- Real org logs gitignored (PII); committed = parser + synthetic test + script.
+
+### Decision: CONTINUE to Day 4 (analyze_debug_log tool + wiring).
 ---

@@ -249,3 +249,4 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+backend/tests/fixtures/debuglog/*.log
