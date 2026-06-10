@@ -2,6 +2,8 @@
 
 Week 8 Day 6: argparse wiring + _announce tool-wrapper.
 Week 9 Day 1: --mode flag + CAPABILITY_REGISTRY (mode-dispatch).
+Week 12 Day 4: debuglog is the 5th capability; analyze_debug_log is a
+debuglog-only tool that sits outside the standard _ALL_TOOLS set.
 
 The live API call is verified manually (costs money, non-deterministic).
 What IS hermetically testable: parsing, the registry contract, and the
@@ -47,7 +49,7 @@ def test_parser_default_mode_is_qa():
 
 
 def test_parser_accepts_each_valid_mode():
-    for mode in ("qa", "apex", "soql", "impact"):
+    for mode in ("qa", "apex", "soql", "impact", "debuglog"):
         args = ask_cli._build_parser().parse_args(["q", "--mode", mode])
         assert args.mode == mode
 
@@ -78,8 +80,8 @@ def test_parser_explicit_mode_beats_default_override():
 # CAPABILITY_REGISTRY contract (Week 9)
 # ------------------------------------------------------------------
 
-def test_registry_has_all_four_capabilities():
-    assert set(ask_cli.CAPABILITY_REGISTRY) == {"qa", "apex", "soql", "impact"}
+def test_registry_has_all_five_capabilities():
+    assert set(ask_cli.CAPABILITY_REGISTRY) == {"qa", "apex", "soql", "impact", "debuglog"}
 
 
 def test_registry_every_mode_maps_to_builder_and_toolset():
@@ -104,8 +106,11 @@ def test_registry_non_impact_modes_include_get_source():
 
 def test_registry_toolsets_are_subsets_of_all_tools():
     # No mode can name a tool that doesn't exist in the full catalogue.
+    # analyze_debug_log is a debuglog-only specialized tool, not part of the
+    # standard _ALL_TOOLS set, so include it in the valid-names universe.
+    valid = ask_cli._ALL_TOOLS | {"analyze_debug_log"}
     for mode, (_, tools) in ask_cli.CAPABILITY_REGISTRY.items():
-        assert tools <= ask_cli._ALL_TOOLS, f"{mode} names an unknown tool"
+        assert tools <= valid, f"{mode} names an unknown tool"
 
 
 def test_valid_modes_matches_registry():

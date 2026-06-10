@@ -3111,4 +3111,41 @@ readiness). Reuses Week-4 OAuth state via the loader's token check.
 - Real org logs gitignored (PII); committed = parser + synthetic test + script.
 
 ### Decision: CONTINUE to Day 4 (analyze_debug_log tool + wiring).
+
+## Week 12 Day 4 — Capability 5 (debug-log): tool + wiring
+
+### ADR-017 — debug-log capability interface ({log reference}, not {question})
+- analyze_debug_log(log_path): handler reads file (cwd-independent resolve) ->
+  pure parser -> correlate_log_to_graph. Claude gets STRUCTURED prose, never raw
+  log (the data-fix-before-prompt principle + cost control).
+- Asymmetry recorded: the other 4 take {question}; debuglog takes a log
+  reference. Day-5 consequence: its REST route uses DebugLogRequest{log_path,
+  question?}, not the shared CapabilityRequest. log_text deferred (hosted-client
+  extension), not built.
+
+### correlate.py (intelligence/debuglog/correlate.py)
+- Joins parsed apex_units to graph nodes: exception (type/msg/line), units that
+  ran + which are graph nodes, and each in-graph unit's direct deps/dependents
+  WITH edge labels. Name-first via resolve_one (ADR-013); 15-char Id tie-breaker.
+- Verified across branches: in-graph + labelled edges, managed/not-in-graph
+  flagged, Flow-only -> "none executed", exception path.
+
+### tool_definitions.py — analyze_debug_log added to the always-built graph
+  family (engine+graph, no cache). Catalogue 6->7; no-cache set 5->6 (two test
+  assertions updated to match).
+
+### system_prompt.py — build_debuglog_prompt: evidence-bounded, mirrors impact
+  discipline. Bakes in the Opportunity-log finding: Flow-only logs -> say the
+  failure isn't in the Apex graph, don't manufacture a cause.
+
+### capabilities.py — registry entry "debuglog": (build_debuglog_prompt,
+  _GRAPH_ONLY | {analyze_debug_log}). get_source EXCLUDED (Decision 4; flip
+  trigger = a Day-5 eval failing specifically for lack of source).
+
+### Tests: test_debuglog_correlate.py (6 — 4 correlation branches + 2 wiring).
+  Suite 330 -> 336.
+
+### Day 5: expose debuglog on CLI/MCP/REST + debuglog eval cases (20->25) +
+  cross-surface proof. The registry entry already propagates the capability;
+  Day 5 wires the 3 transports + the DebugLogRequest REST shape.
 ---

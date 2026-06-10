@@ -8,6 +8,9 @@ record ids line up with the graph node ids.
 
 Handlers are async (ClaudeClient's ToolHandler contract), so every handler test
 is marked asyncio even though the underlying QueryEngine is synchronous.
+
+Week 12 Day 4: analyze_debug_log joins the always-built graph family, so the
+catalogue is 7 and the no-cache set is 6.
 """
 import pytest
 from pydantic import BaseModel
@@ -123,7 +126,7 @@ def test_catalogue_count_and_names():
     names = {t["name"] for t in TOOL_SCHEMAS}
     assert names == {
         "find_dependencies", "find_references_to", "analyze_impact",
-        "find_by_name", "graph_health", "get_source",
+        "find_by_name", "graph_health", "analyze_debug_log", "get_source",
     }
 
 def test_every_schema_has_required_keys():
@@ -138,7 +141,9 @@ def test_build_without_cache_excludes_get_source():
     names = {t["name"] for t in schemas}
     assert "get_source" not in names
     assert "get_source" not in handlers
-    assert len(names) == 5
+    # analyze_debug_log is graph-family (no cache needed), so it is built here.
+    assert "analyze_debug_log" in names
+    assert len(names) == 6
 
 @pytest.mark.asyncio
 async def test_build_with_cache_includes_get_source(tmp_path):

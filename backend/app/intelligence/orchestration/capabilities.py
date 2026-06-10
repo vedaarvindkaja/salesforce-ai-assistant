@@ -1,13 +1,14 @@
 # No direct Apex equivalent — capability wiring (orchestration layer, ADR-001).
 """Capability definitions and per-mode client wiring.
 
-This is the single source of truth for WHAT each MVP capability is:
+This is the single source of truth for WHAT each capability is:
   - which system-prompt builder it uses, and
   - which subset of tools Claude may see in that mode.
 
 Both AI interfaces consume this module:
   - ask_cli.py  (the CLI — streaming, prints to stdout)
   - mcp_server/server.py  (MCP transport — collected, returns one string)
+  - rest_api  (the REST capability routes — streaming over SSE)
 
 Extracting this here (rather than leaving it inlined in ask_cli) keeps the
 capability definitions in ONE place, so a change to a mode's tool subset
@@ -17,7 +18,7 @@ one interface. The ROADMAP's target structure anticipated this module
 (orchestration/capabilities.py — "The 5 capabilities").
 
 It does NOT load the graph — each interface bootstraps the graph its own way
-(the CLI rebuilds per invocation; the long-lived MCP server caches it) and
+(the CLI rebuilds per invocation; the long-lived MCP/REST servers cache it) and
 passes the live (engine, graph, cache, org_key) in.
 """
 from __future__ import annotations
@@ -30,6 +31,7 @@ from app.intelligence.graph.storage import MetadataCache
 from app.intelligence.orchestration.claude_client import ClaudeClient, ToolHandler
 from app.intelligence.orchestration.system_prompt import (
     build_apex_prompt,
+    build_debuglog_prompt,
     build_impact_prompt,
     build_soql_prompt,
     build_system_prompt,
@@ -40,20 +42,25 @@ from app.intelligence.orchestration.tool_definitions import build_tools
 # Tool subsets — what Claude can see per capability mode.
 # impact excludes get_source: topology is sufficient; source reading
 # adds cost with no benefit for blast-radius analysis.
+# debuglog adds analyze_debug_log to the graph-only set; get_source is
+# excluded for now (Week 12 Day 4 decision — log evidence + topology first,
+# flip only if an eval fails specifically because root-cause needed source).
 # ------------------------------------------------------------------
 _ALL_TOOLS = {
     "find_dependencies", "find_references_to", "analyze_impact",
     "find_by_name", "graph_health", "get_source",
 }
 _GRAPH_ONLY = _ALL_TOOLS - {"get_source"}
+_DEBUGLOG_TOOLS = _GRAPH_ONLY | {"analyze_debug_log"}
 
 # Registry: mode -> (prompt_builder, allowed_tool_names)
 # Adding a new capability = one new entry here + a new builder in system_prompt.py.
 CAPABILITY_REGISTRY: dict[str, tuple] = {
-    "qa":     (build_system_prompt, _ALL_TOOLS),
-    "apex":   (build_apex_prompt,   _ALL_TOOLS),
-    "soql":   (build_soql_prompt,   _ALL_TOOLS),
-    "impact": (build_impact_prompt, _GRAPH_ONLY),
+    "qa":       (build_system_prompt,   _ALL_TOOLS),
+    "apex":     (build_apex_prompt,     _ALL_TOOLS),
+    "soql":     (build_soql_prompt,     _ALL_TOOLS),
+    "impact":   (build_impact_prompt,   _GRAPH_ONLY),
+    "debuglog": (build_debuglog_prompt, _DEBUGLOG_TOOLS),
 }
 
 VALID_MODES = list(CAPABILITY_REGISTRY.keys())

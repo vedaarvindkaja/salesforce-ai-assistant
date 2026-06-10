@@ -2,10 +2,11 @@
 """System-prompt builders for the tool-pull orchestration model (ADR-014).
 
 One builder per capability mode:
-  build_system_prompt  — qa     (generic metadata Q&A, the Week-8 original)
-  build_apex_prompt    — apex   (Apex explanation + refactoring)
-  build_soql_prompt    — soql   (SOQL generation with object/class awareness)
-  build_impact_prompt  — impact (deployment impact analysis)
+  build_system_prompt  — qa       (generic metadata Q&A, the Week-8 original)
+  build_apex_prompt    — apex     (Apex explanation + refactoring)
+  build_soql_prompt    — soql     (SOQL generation with object/class awareness)
+  build_impact_prompt  — impact   (deployment impact analysis)
+  build_debuglog_prompt— debuglog (Apex debug-log root-cause analysis, Week 12)
 
 All builders follow the same contract: orientation, not data. The prompt tells
 Claude the SHAPE of the org (counts, edge semantics, known limitations) so it
@@ -221,4 +222,53 @@ RECOMMENDED CHECKS: specific tests or validations before deploying.
 Be precise about mechanism — a Flow dependency is higher risk than an Apex \
 dependency because Apex changes fail at compile time while Flow wiring breaks \
 silently at runtime."""
+    return base + focus
+
+
+def build_debuglog_prompt(graph: MetadataGraph) -> str:
+    """debuglog mode — Apex debug-log root-cause analysis (Week 12).
+
+    Focus: given a debug log, identify what failed (or what ran) and explain the
+    likely root cause GROUNDED in two evidence sources only — the logged
+    exception and the metadata graph's labelled edges. Mirrors impact-mode
+    discipline: state mechanism from edge labels, never infer it; never invent a
+    cause the evidence doesn't support.
+
+    Note: get_source is NOT in this mode's tool set (Decision, Week 12 Day 4) —
+    log evidence + topology first; flip only if an eval fails specifically for
+    lack of source.
+    """
+    base = _shared_orientation(graph.stats())
+    focus = """
+
+CAPABILITY FOCUS — DEBUG-LOG ROOT-CAUSE ANALYSIS
+Your job is to explain why an Apex execution failed (or what it did), grounded
+strictly in the debug log and the dependency graph.
+
+Workflow:
+1. Call analyze_debug_log with the provided log path FIRST. It returns the
+   exception (type/message/line), the Apex units that executed and which are
+   graph nodes, and each in-graph unit's direct dependencies/dependents WITH
+   edge labels. This is your evidence base.
+2. Use find_dependencies / find_references_to / analyze_impact on a suspect unit
+   to widen the blast radius when the direct context isn't enough.
+3. Use find_by_name only if you need to locate a related component.
+
+Output format — structure your answer as:
+WHAT FAILED: the exception type, message, and failing line/unit — quote the log.
+  If there was no exception, say what the run did instead.
+WHERE IT SITS: the failing unit's position in the graph (its dependencies and
+  dependents), using the edge labels from analyze_debug_log.
+LIKELY CAUSE: grounded ONLY in the exception + the labelled edges above. If the
+  exception originates outside the graph (managed package, System namespace, or
+  an anonymous block), say so plainly rather than blaming an in-graph class.
+WHAT TO CHECK: concrete next steps — a specific class/method/field to inspect.
+
+Discipline (same as impact mode):
+- State mechanism from the edge label (CALLS, REFERENCES, USES_OBJECT,
+  via=flow_action), never infer it from a node's name.
+- If the log shows no Apex units (Flow/Workflow-only automation), say the
+  failure isn't in the Apex graph — do NOT manufacture an Apex root cause.
+- Never invent a stack frame, a dependency, or a cause the evidence doesn't
+  show. Absence of evidence is itself a finding, not a gap to fill."""
     return base + focus

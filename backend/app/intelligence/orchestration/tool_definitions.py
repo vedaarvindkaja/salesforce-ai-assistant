@@ -3,17 +3,18 @@ answer questions about the Salesforce metadata graph.
 
 Two families:
   GRAPH-QUERY tools (find_dependencies, find_references_to, analyze_impact,
-    find_by_name, graph_health) — thin async wrappers over QueryEngine. Need
-    only an in-memory engine + graph.
+    find_by_name, graph_health, analyze_debug_log) — thin async wrappers over
+    QueryEngine (+ the debug-log parser/correlator). Need only an in-memory
+    engine + graph.
   CONTENT-RETRIEVAL tool (get_source) — reads the raw Apex Body or Flow XML
     from the cache. Needs the MetadataCache + org_key.
 
 Structure:
-  TOOL_SCHEMAS   — the full catalogue of schemas Claude can see (6 tools).
+  TOOL_SCHEMAS   — the full catalogue of schemas Claude can see (7 tools).
   build_tools()  — binds async handlers to a live engine + graph, and (when a
                    cache + org_key are supplied) the get_source handler too.
                    Returns (schemas, handler_map). Without a cache it returns
-                   the 5 graph-query tools only — the graph tools genuinely
+                   the 6 graph-query tools only — the graph tools genuinely
                    don't need a cache, so the signature reflects that.
 
 Handlers reuse intelligence/graph/naming.py for resolution + labels (ADR-013).
@@ -22,6 +23,8 @@ these to reason; prose preserves name/type/via-label for fewer tokens).
 """
 from __future__ import annotations
 
+from app.intelligence.debuglog.correlate import correlate_log_to_graph, resolve_log_path
+from app.intelligence.debuglog.parser import parse_debug_log_file
 from app.intelligence.graph.models import MetadataGraph, NodeType
 from app.intelligence.graph.naming import (
     edge_method_detail,
@@ -171,6 +174,30 @@ _GRAPH_QUERY_SCHEMAS: list[dict] = [
             "required": [],
         },
     },
+    {
+        "name": "analyze_debug_log",
+        "description": (
+            "Parse a Salesforce Apex debug log and correlate the Apex units that "
+            "executed (and any exception) to the metadata graph. Returns the "
+            "exception (type/message/line) if the run failed, the distinct Apex "
+            "classes/triggers that ran and which are graph nodes, and — for each "
+            "in-graph unit — its direct dependencies and dependents WITH "
+            "mechanism labels. Call this FIRST when given a debug log; then use "
+            "the graph tools (find_dependencies, analyze_impact) to drill into a "
+            "suspect unit's wider blast radius. Input is a server-readable path."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "log_path": {
+                    "type": "string",
+                    "description": "Path to the debug log file on the server "
+                                   "(absolute, or relative to the backend dir).",
+                },
+            },
+            "required": ["log_path"],
+        },
+    },
 ]
 
 # ------------------------------------------------------------------
@@ -223,7 +250,7 @@ def build_tools(
     Returns (schemas, handler_map). Register each handler with
     ClaudeClient.register_tool(name, handler), and pass schemas to ask().
 
-    The five graph-query tools are always built. get_source is added only when
+    The six graph-query tools are always built. get_source is added only when
     BOTH cache and org_key are supplied — it reads raw source from the cache,
     which the graph tools don't need. Handlers are async to satisfy the
     client's ToolHandler contract.
@@ -326,12 +353,22 @@ def build_tools(
 
         return "\n\n".join(sections)
 
+    async def analyze_debug_log(inp: dict) -> str:
+        # Read + parse the log (pure parser), then correlate to the graph.
+        # Claude never sees the raw log — only the structured correlation.
+        path = resolve_log_path(inp.get("log_path", ""))
+        if not path.exists():
+            return f"Debug log not found at {path}."
+        result = parse_debug_log_file(path)
+        return correlate_log_to_graph(result, engine, graph)
+
     handler_map = {
         "find_dependencies": find_dependencies,
         "find_references_to": find_references_to,
         "analyze_impact": analyze_impact,
         "find_by_name": find_by_name,
         "graph_health": graph_health,
+        "analyze_debug_log": analyze_debug_log,
     }
     schemas = list(_GRAPH_QUERY_SCHEMAS)
 
@@ -393,44 +430,3 @@ def build_tools(
         schemas = schemas + _CONTENT_SCHEMAS
 
     return schemas, handler_map
-
-
-# ============================================================
-# APEX EQUIVALENT (for comparison)
-# ============================================================
-# The graph-query tools map to @InvocableMethod entry points (see the prior
-# version's note). get_source is the new piece: it reads cached raw source,
-# which in Salesforce is reading ApexClass.Body / a Flow's metadata.
-#
-#    public class GetSource {
-#        public class Request { @InvocableVariable(required=true) public String name; }
-#        public class Result  { @InvocableVariable public String source; }
-#
-#        @InvocableMethod(label='Get Source'
-#            description='Raw Apex body or Flow XML for a component.')
-#        public static List<Result> run(List<Request> reqs) {
-#            List<Result> out = new List<Result>();
-#            for (Request req : reqs) {
-#                // Apex: SOQL the Tooling object by Id/Name
-#                //   [SELECT Body FROM ApexClass WHERE Name = :req.name]
-#                // Flow: the Metadata API readMetadata('Flow', {name}) call
-#                //   (cf. metadata_api.py) — no plain-SOQL equivalent for Flow XML
-#                Result r = new Result();
-#                r.source = SourceReader.read(req.name);   // branches by type
-#                out.add(r);
-#            }
-#            return out;
-#        }
-#    }
-#
-# Concept mapping:
-# - cache.get_one(ApexClass, id).Body     → [SELECT Body FROM ApexClass WHERE Id = :id]
-# - cache.get(Flow) + match DeveloperName  → readMetadata('Flow', names) (SOAP)
-# - node.id is the SF Id (Apex)            → record Id is the SOQL key
-# - node.id is synthetic flow:<name>       → Flow has no queryable Body; match by
-#                                            DeveloperName, read structure via SOAP
-# - _truncate guardrail                    → Apex heap/CPU limits force you to bound
-#                                            large String reads anyway
-# - Object → "no source"                   → EntityDefinition has no body to read;
-#                                            it's schema, not code (ADR-010 parallel)
-# ============================================================
