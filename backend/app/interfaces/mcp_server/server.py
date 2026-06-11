@@ -30,21 +30,19 @@ Run directly for a local smoke test:
 from __future__ import annotations
 
 import logging
-import os
 import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 
-from app.intelligence.graph.builder import GraphBuilder
+from app.intelligence.graph.bootstrap import GraphLoadError, load_graph
 from app.intelligence.graph.query import QueryEngine
 from app.intelligence.graph.storage import MetadataCache
 from app.intelligence.orchestration.capabilities import (
     build_capability_client,
     compose_debuglog_input,
 )
-from app.salesforce.token_storage import load_tokens
 
 # Force UTF-8 on stdio. On Windows, Python may default stdout/stderr to a legacy
 # code page (cp1252), which mangles non-ASCII characters (· → Â·, — → â€") seen
@@ -76,21 +74,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger("mcp_server")
 
-# Cache path resolution — MUST NOT depend on the process working directory.
-# An MCP host launches this server from its own cwd (Claude Desktop was observed
-# launching from C:\Windows\System32), and the `cwd` config field is not reliably
-# honoured. So we resolve the cache path in this order:
-#   1. SF_CACHE_PATH env var, if set (the host CAN set env reliably — that's how
-#      PYTHONPATH reaches us), else
-#   2. <backend>/data/metadata_cache.db, computed relative to THIS source file.
-# Both are cwd-independent. ask_cli.py keeps its cwd-relative Path("data")/... —
-# it's a short-lived process the user launches from backend/, so cwd is correct
-# there; only the host-launched server needs this hardening.
-_CACHE_PATH = (
-    Path(os.environ["SF_CACHE_PATH"])
-    if os.environ.get("SF_CACHE_PATH")
-    else _BACKEND_DIR / "data" / "metadata_cache.db"
-)
+# Cache-path resolution is delegated to bootstrap.load_graph (ADR-015): it
+# applies the same cwd-independent rule the server used to compute inline —
+# SF_CACHE_PATH env var if set, else <backend>/data/metadata_cache.db relative
+# to the source file. The host launches us from an arbitrary cwd (observed:
+# C:\Windows\System32), so this MUST stay cwd-independent — which load_graph is.
 
 # ------------------------------------------------------------------
 # The MCP server instance.
@@ -117,51 +105,22 @@ _cache: MetadataCache | None = None
 _org_key: str | None = None
 
 
-class GraphLoadError(Exception):
-    """Raised when the graph can't be bootstrapped. Carries a user-facing
-    message that tool handlers turn into a returned error string (rather than
-    letting the exception escape and surface as an opaque protocol error)."""
-
-
 async def _get_engine() -> tuple[QueryEngine, object, MetadataCache, str]:
-    """Return the cached (engine, graph, cache, org_key), building once.
+    """Return the cached (engine, graph, cache, org_key), building once via the
+    shared loader (ADR-015).
 
-    Raises GraphLoadError with a readable message if prerequisites are missing.
-    Mirrors ask_cli._load(), but raises a catchable error instead of SystemExit
-    (a long-lived server must not exit the process on a single bad call).
+    The module-level cache is this server's concern (a long-lived process must
+    not rebuild per call); the LOAD itself — tokens, cache, empty-graph check,
+    cwd-independent path — is delegated to bootstrap.load_graph, the single
+    source the CLI and REST also use. load_graph raises GraphLoadError, which
+    the tool handlers turn into a readable error string rather than letting it
+    escape as an opaque protocol fault (a server must survive one bad call).
     """
     global _engine, _graph, _cache, _org_key
     if _engine is not None:
         return _engine, _graph, _cache, _org_key  # type: ignore[return-value]
 
-    tokens = load_tokens()
-    if tokens is None:
-        raise GraphLoadError(
-            "No OAuth tokens found. Visit http://localhost:8000/auth/login, "
-            "then run: python -m scripts.extract_to_cache"
-        )
-    org_key = tokens.instance_url
-    if not _CACHE_PATH.exists():
-        raise GraphLoadError(
-            f"Cache not found at {_CACHE_PATH.resolve()}. "
-            "Run: python -m scripts.extract_to_cache "
-            "(and launch the server with backend/ as the working directory)."
-        )
-    cache = MetadataCache(_CACHE_PATH)
-    graph = await GraphBuilder(cache).build(org_key=org_key)
-    if graph.stats().node_count == 0:
-        raise GraphLoadError(
-            f"Graph is empty for org_key={org_key!r}. "
-            "Re-run: python -m scripts.extract_to_cache"
-        )
-
-    _engine, _graph, _cache, _org_key = QueryEngine(graph), graph, cache, org_key
-    logger.info(
-        "Graph loaded: %d nodes / %d edges (org_key=%s)",
-        graph.stats().node_count,
-        graph.stats().edge_count,
-        org_key,
-    )
+    _engine, _graph, _cache, _org_key = await load_graph()
     return _engine, _graph, _cache, _org_key
 
 

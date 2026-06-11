@@ -36,11 +36,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
-from pathlib import Path
-
 from dotenv import load_dotenv
 
-from app.intelligence.graph.builder import GraphBuilder
+from app.intelligence.graph.bootstrap import GraphLoadError, load_graph
 from app.intelligence.graph.query import QueryEngine
 from app.intelligence.graph.storage import MetadataCache
 from app.intelligence.orchestration.capabilities import (
@@ -50,11 +48,8 @@ from app.intelligence.orchestration.capabilities import (
     build_capability_client,
     compose_debuglog_input,
 )
-from app.salesforce.token_storage import load_tokens
 
 load_dotenv()
-
-_CACHE_PATH = Path("data") / "metadata_cache.db"
 
 # Re-exported above (CAPABILITY_REGISTRY, VALID_MODES, _ALL_TOOLS) so existing
 # import paths (ask_cli.CAPABILITY_REGISTRY etc.) keep resolving after the
@@ -63,29 +58,23 @@ _CACHE_PATH = Path("data") / "metadata_cache.db"
 
 
 # ------------------------------------------------------------------
-# Graph + cache bootstrap
+# Graph + cache bootstrap (ADR-015 shared loader)
 # ------------------------------------------------------------------
 
 async def _load() -> tuple[QueryEngine, "MetadataGraph", MetadataCache, str]:
-    tokens = load_tokens()
-    if tokens is None:
-        raise SystemExit(
-            "No OAuth tokens found. Visit http://localhost:8000/auth/login, "
-            "then run: python -m scripts.extract_to_cache"
-        )
-    org_key = tokens.instance_url
-    if not _CACHE_PATH.exists():
-        raise SystemExit(
-            f"Cache not found at {_CACHE_PATH}. Run: python -m scripts.extract_to_cache"
-        )
-    cache = MetadataCache(_CACHE_PATH)
-    graph = await GraphBuilder(cache).build(org_key=org_key)
-    if graph.stats().node_count == 0:
-        raise SystemExit(
-            f"Graph is empty for org_key={org_key!r}. "
-            "Re-run: python -m scripts.extract_to_cache"
-        )
-    return QueryEngine(graph), graph, cache, org_key
+    """Load the graph via the shared bootstrap loader, translating its
+    GraphLoadError into the CLI's SystemExit contract.
+
+    The CLI is a short-lived process, so SystemExit is the right failure mode:
+    print the readable message and exit non-zero. load_graph carries the same
+    tokens / cache / empty-graph checks the CLI used to duplicate inline
+    (ADR-015) — and resolves the cache path cwd-independently, so the CLI now
+    works from any directory, not only backend/.
+    """
+    try:
+        return await load_graph()
+    except GraphLoadError as exc:
+        raise SystemExit(str(exc)) from exc
 
 
 # ------------------------------------------------------------------
