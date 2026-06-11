@@ -3193,4 +3193,48 @@ readiness). Reuses Week-4 OAuth state via the loader's token check.
 
 ### Naming: REST route = /api/v1/debug-log-analysis (noun, like deployment-impact).
   ROADMAP's stale "debug-log-analyze" -> reconcile Day 6.
+
+## Week 12 Day 6 — Regression, ADR-015 migration, Week-12 retro
+
+### Regression baseline: 344 unit tests green. [+ 25 evals if full run.]
+
+### ADR-015 migration (Day-1 buffer item, completed)
+- CLI _load and MCP _get_engine now both call bootstrap.load_graph — the
+  duplicated tokens/cache/build/empty-check is deleted from both.
+- Contracts preserved: CLI translates GraphLoadError -> SystemExit (short-lived
+  process); MCP keeps its module-level engine cache around the call (long-lived)
+  and catches GraphLoadError -> readable string.
+- Side benefit: CLI is now cwd-independent (was Path("data")/..., now
+  backend-relative via bootstrap) — works from any directory.
+- ADR-015 FULLY adopted: one loader, three consumers (CLI/MCP/REST). The
+  3-hand-copied-copies drift risk the ADR was created to kill is gone. Suite
+  green post-migration (the backstop held).
+
+### Week-12 retrospective
+Shipped:
+- REST API (ADR-015/016): bootstrap loader, 4 capability routes + /graph, SSE
+  streaming, 503 precondition-gating.
+- Debug-log capability (ADR-017): the parked 5th. Pure parser + graph correlator
+  + analyze_debug_log tool + debuglog mode, on all 3 transports, 5 evals. Both
+  paths proven live (grounded correlation + Flow-only honesty).
+- ADR-015 fully adopted (Day 6).
+
+Held (process):
+- Data-fix-before-prompt: correlation feeds Claude structured prose, never the
+  raw log — no prompt band-aid for cost or over-narration.
+- Gate-before-stacking: Day-3 gate passed before the tool was built; each
+  surface verified before the next.
+- Trigger-gated parking over vague "Phase 2": every deferral has a named trigger.
+- Single-source discipline extended: compose_debuglog_input is the one home for
+  the log-reference framing across CLI/MCP/REST.
+
+Honest deltas:
+- Stale ROADMAP Week-12 lines (API-key, rate-limiting, "5 endpoints") corrected
+  in the reconciliation — trigger-deferred, not done.
+- Day-5 commit silently dropped the eval fixtures (repo-wide *.log ignore);
+  caught + fixed with a scoped .gitignore negation. Lesson: never chain a
+  stop-gate check into the commit it gates.
+
+### Week 13 readiness: REST API is the extension's spine; /docs exposes the
+  typed routes (incl. DebugLogRequest) the extension generates its client from.
 ---

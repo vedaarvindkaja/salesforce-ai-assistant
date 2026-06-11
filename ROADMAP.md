@@ -861,42 +861,49 @@ Test targets: Cursor → Augment AI (enterprise/Salesforce fit; already installe
 Tests unchanged at 304 unit + 20 semantic.
 
 ---
-#### Week 12 — REST API + auth flow (15 hours)
+## Week 12 — Shipped (reconciliation against plan)
 
-**Goal:** Build REST API for VS Code extension to consume.
+Two committed deliverables, both landed: the REST API (Days 1-2) and the
+debug-log capability (Days 3-5). ADRs 015/016/017.
 
-**Day 1-2 (5 hours)** — REST API endpoints
-- `interfaces/rest_api/routes/intelligence.py`
-- POST `/api/v1/metadata-qa`
-- POST `/api/v1/apex-explain`
-- POST `/api/v1/soql-generate`
-- POST `/api/v1/deployment-impact`
-- POST `/api/v1/debug-log-analyze`
-- All with streaming SSE responses
+### Plan vs actual — corrections to the original Week-12 lines
+- "5 capability endpoints" -> shipped 4 question-shaped routes (metadata-qa,
+  apex-explain, soql-generate, deployment-impact) + the 5th capability route
+  (debug-log-analysis, Day 5) + a read-only /graph stats route. FIVE capability
+  routes total, plus /graph.
+- "API key auth" + "rate limiting" -> NOT built. Trigger-deferred by decision;
+  trigger = "serves more than one user", not met (still single-user).
+  Precondition-gating (503 when graph absent) is the only gate.
+- "OpenAPI docs" -> shipped (FastAPI /docs; four explicit typed routes per
+  ADR-016 for a clean typed-client surface for the Week-13 extension).
+- Debug-log capability (the parked 5th) -> shipped end-to-end: parser +
+  correlator + analyze_debug_log tool + debuglog mode, on CLI/MCP/REST, 5 evals
+  (20 -> 25). ADR-017.
 
-**Day 3 (3 hours)** — Authentication for extension
-- Local auth: API key in extension settings
-- For now, single-user single-key (multi-tenant in Phase 2)
+### Architecture decisions
+- ADR-015: shared graph loader (bootstrap.load_graph). FULLY adopted Day 6 —
+  CLI, MCP, REST now all load through it (Day-1 deferral closed).
+- ADR-016: four explicit REST routes over one parametrized route.
+- ADR-017: debug-log takes a log REFERENCE, not a question; parsed/correlated
+  server-side, Claude gets structured prose only.
 
-**Day 4 (3 hours)** — Rate limiting and logging
-- Per-endpoint rate limits
-- Structured logging for debugging
-- Request/response correlation IDs
+### REST routes (locked): /api/v1/{metadata-qa, apex-explain, soql-generate,
+  deployment-impact, debug-log-analysis} + GET /api/v1/graph.
 
-**Day 5 (3 hours)** — OpenAPI documentation
-- Auto-generated from FastAPI
-- Examples for each endpoint
-- Schema validation
+### Counts at Week-12 close: graph 57 nodes / 172 edges; 344 unit tests + 25
+  semantic evals; 5 capabilities; 3 transports.
 
-**Day 6-7 (1 hour)** — Commit, push, plan Week 13
+### Parked, with triggers:
+- API-key auth / rate limiting -> trigger: >1 user.
+- Graph persistence -> trigger: rebuild > ~2s.
+- FIELD nodes / Flow record-operation edges -> trigger: an eval fails for
+  field-grain reasons.
+- get_source for debuglog -> trigger: an eval fails for lack of source.
+- Option-B / ADR-014 (tool-pull vs pre-loaded) -> trigger: a capability
+  measurably fails because tool-pull missed context.
 
-**Deliverables:**
-- ✅ REST API with all 5 capabilities
-- ✅ SSE streaming support
-- ✅ Auth, rate limiting, logging
-- ✅ OpenAPI docs at /docs
-- ✅ Ready for VS Code extension to consume
-
+### Next: Week 13 — VS Code extension (the REST API is its spine).
+  README rewrite Week 14 Day 2; Phase-1 portfolio milestone Week 15.
 ---
 
 #### Week 13 — VS Code extension (20 hours)
