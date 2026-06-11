@@ -1,6 +1,11 @@
 import * as vscode from "vscode";
 
-import { fetchGraphSummary, streamCapability, type RequestBody } from "./client";
+import {
+  fetchGraphSummary,
+  streamCapability,
+  type ProbeResult,
+  type RequestBody,
+} from "./client";
 import {
   OutputChannelRenderer,
   type Renderer,
@@ -31,7 +36,6 @@ function pickRenderer(
 // Editor-context input sources
 // ---------------------------------------------------------------------------
 
-/** Class/trigger name from the active .cls/.trigger file, or undefined. */
 function activeApexName(): string | undefined {
   const editor = vscode.window.activeTextEditor;
   if (!editor) {
@@ -46,7 +50,6 @@ function activeApexName(): string | undefined {
   return base.slice(0, base.length - ext.length);
 }
 
-/** Filesystem path of the active .log file, or undefined. */
 function activeLogPath(): string | undefined {
   const editor = vscode.window.activeTextEditor;
   if (!editor || editor.document.uri.scheme !== "file") {
@@ -57,8 +60,7 @@ function activeLogPath(): string | undefined {
 }
 
 // ---------------------------------------------------------------------------
-// Shared capability runner — every command funnels through here. Same client,
-// same renderer, same SSE plumbing; only (title, path, body) differ.
+// Shared capability runner — every command funnels through here.
 // ---------------------------------------------------------------------------
 
 async function runCapability(
@@ -80,8 +82,37 @@ async function runCapability(
       const controller = new AbortController();
       token.onCancellationRequested(() => controller.abort());
       await streamCapability(baseUrl, path, body, renderer, controller.signal);
+      if (token.isCancellationRequested) {
+        // Aborted streams don't emit a `done` event, so finalize the indicator.
+        renderer.appendChunk("\n\n_(stopped)_");
+        renderer.done();
+      }
     }
   );
+}
+
+// ---------------------------------------------------------------------------
+// Status bar
+// ---------------------------------------------------------------------------
+
+function updateStatusItem(item: vscode.StatusBarItem, result: ProbeResult): void {
+  const warn = new vscode.ThemeColor("statusBarItem.warningBackground");
+  switch (result.status) {
+    case "ready":
+      item.text = `$(database) SF Graph: ${result.summary.node_count}/${result.summary.edge_count}`;
+      item.tooltip = `Connected to ${result.summary.org_key}`;
+      item.backgroundColor = undefined;
+      break;
+    case "not-ready":
+      item.text = "$(database) SF Graph: not ready";
+      item.tooltip = "API is up but the graph isn't loaded (503). Click to retry.";
+      item.backgroundColor = warn;
+      break;
+    default:
+      item.text = "$(database) SF Graph: offline";
+      item.tooltip = "API unreachable. Start uvicorn, then click to retry.";
+      item.backgroundColor = warn;
+  }
 }
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -89,6 +120,17 @@ export function activate(context: vscode.ExtensionContext): void {
   const outputRenderer = new OutputChannelRenderer(channel);
   const webviewRenderer = new WebviewRenderer(context.extensionUri);
   const renderer = () => pickRenderer(webviewRenderer, outputRenderer);
+
+  const statusItem = vscode.window.createStatusBarItem(
+    vscode.StatusBarAlignment.Left,
+    100
+  );
+  statusItem.command = "salesforceGraph.checkConnection";
+  statusItem.text = "$(database) SF Graph";
+  statusItem.tooltip = "Check the Salesforce Graph API connection";
+  statusItem.show();
+  // Quiet initial probe so the status reflects reality on activation.
+  void fetchGraphSummary(getApiBaseUrl()).then((r) => updateStatusItem(statusItem, r));
 
   // qa — free-text question.
   const ask = vscode.commands.registerCommand("salesforceGraph.ask", async () => {
@@ -191,7 +233,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   );
 
-  // Day-2 readiness probe.
+  // Day-2 readiness probe — also refreshes the status bar item.
   const connection = vscode.commands.registerCommand(
     "salesforceGraph.checkConnection",
     async () => {
@@ -203,6 +245,7 @@ export function activate(context: vscode.ExtensionContext): void {
         },
         () => fetchGraphSummary(baseUrl)
       );
+      updateStatusItem(statusItem, result);
 
       switch (result.status) {
         case "ready": {
@@ -234,6 +277,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     channel,
+    statusItem,
     ask,
     explainApex,
     deploymentImpact,

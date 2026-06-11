@@ -50,11 +50,10 @@ interface OutboundMessage {
 
 /**
  * Renders a streamed answer into a webview panel with formatted Markdown — the
- * SAME Renderer interface as OutputChannelRenderer, so client.ts is unaware of
- * the difference. Handles the two webview hazards: (1) a strict CSP with a
- * per-load nonce, and (2) the load race — messages posted before the webview's
- * script has registered its listener are dropped, so we buffer until the
- * webview posts {type:"ready"} back, then flush.
+ * SAME Renderer interface as OutputChannelRenderer. Handles the two webview
+ * hazards: (1) a strict CSP with a per-load nonce, and (2) the load race —
+ * messages posted before the webview's script registers its listener are
+ * dropped, so we buffer until the webview posts {type:"ready"}, then flush.
  */
 export class WebviewRenderer implements Renderer {
   private panel: vscode.WebviewPanel | undefined;
@@ -154,7 +153,9 @@ export class WebviewRenderer implements Renderer {
              border-bottom: 1px solid var(--vscode-panel-border); }
   #status { font-size: 0.85rem; color: var(--vscode-descriptionForeground);
             margin: 10px 0 16px; min-height: 1em; }
+  #status.thinking { animation: sfg-pulse 1.2s ease-in-out infinite; }
   #status.error { color: var(--vscode-errorForeground); }
+  @keyframes sfg-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
   #content pre { background: var(--vscode-textCodeBlock-background); padding: 12px;
                  border-radius: 4px; overflow-x: auto; }
   #content code { font-family: var(--vscode-editor-font-family); font-size: 0.92em; }

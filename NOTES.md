@@ -3387,4 +3387,25 @@ context binding: explain current Apex file, impact on selection, analyze open
 Next (Day 6): polish — palette enablement/when for the file-bound commands,
 loading/empty states, README screenshots inventory; then Day 7 .vsix packaging.
 ROADMAP reconcile at week-end.
+
+## Week 13 Day 6 — Polish
+
+- package.json: menus.commandPalette when-clauses hide the file-bound commands
+  (explainApex/deploymentImpact = .cls/.trigger; analyzeDebugLog = .log) from the
+  palette unless the active file matches. "Open a file first" warning is now a
+  fallback, not the common path.
+- webview: "Thinking..." indicator pulses (CSS sfg-pulse) until first chunk, then
+  clears (streaming text is the indicator); empty completion shows "No response."
+- extension.ts: status-bar item ($(database) SF Graph) — probes on activation,
+  shows 57/172 ready / "not ready" (503) / "offline" (unreachable, warning tint);
+  click -> checkConnection + refresh. Cancellation finalize: aborted streams emit
+  no done event, so runCapability detects cancel, appends _(stopped)_, finalizes
+  (no hung spinner).
+- Build green: extension.js ~18kb; webview ~70.9kb; dual typecheck clean; vitest 8/8.
+- Screenshots captured to docs/images/ for the Week-14 README: webview table (hero),
+  right-click context menu on .cls, debug-log analysis, status bar ready, palette
+  filtered, renderer toggle.
+
+Next (Day 7): .vsix packaging (vsce), .vscodeignore, final build/commit, Week-13
+retro + ROADMAP reconcile (Yeoman/API-key/Day-5-client stale entries -> actual).
 ---

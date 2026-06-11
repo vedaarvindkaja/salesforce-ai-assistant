@@ -1,7 +1,6 @@
-// Webview client script. Runs in the webview's isolated browser context (NOT
-// the Node extension host), so it has DOM globals but no vscode/node APIs — it
-// talks to the host only via message passing. esbuild bundles this (with marked)
-// to dist/webview.js; the host loads it via asWebviewUri behind a CSP nonce.
+// Webview client script. Runs in the webview's isolated browser context (DOM,
+// no node/vscode), talks to the host only via message passing. esbuild bundles
+// this with marked to dist/webview.js; the host loads it behind a CSP nonce.
 
 import { marked } from "marked";
 
@@ -21,32 +20,40 @@ const contentEl = document.getElementById("content") as HTMLElement;
 
 marked.setOptions({ gfm: true, breaks: false });
 
+function setStatus(text: string, cls: string): void {
+  statusEl.textContent = text;
+  statusEl.className = cls;
+}
+
 let buffer = "";
+let gotChunk = false;
 
 window.addEventListener("message", (event: MessageEvent<InboundMessage>) => {
   const msg = event.data;
   switch (msg.type) {
     case "start":
       buffer = "";
+      gotChunk = false;
       contentEl.innerHTML = "";
       titleEl.textContent = msg.title ?? "Salesforce Graph";
-      statusEl.textContent = "Thinking\u2026";
-      statusEl.className = "";
+      setStatus("Thinking\u2026", "thinking");
       break;
     case "chunk":
       buffer += msg.text ?? "";
-      // Re-render the full markdown each chunk: partial markdown (an unclosed
-      // code fence, a half-built table) renders imperfectly mid-stream and
-      // self-corrects as more text arrives — expected streaming behavior.
+      if (!gotChunk) {
+        gotChunk = true;
+        setStatus("", ""); // the streaming text itself is now the indicator
+      }
+      // Re-render the full buffer each chunk: partial markdown self-corrects as
+      // more text arrives — expected streaming behavior.
       contentEl.innerHTML = marked.parse(buffer) as string;
       window.scrollTo(0, document.body.scrollHeight);
       break;
     case "done":
-      statusEl.textContent = "";
+      setStatus(gotChunk ? "" : "No response.", "");
       break;
     case "error":
-      statusEl.textContent = "Error: " + (msg.message ?? "unknown");
-      statusEl.className = "error";
+      setStatus("Error: " + (msg.message ?? "unknown"), "error");
       break;
   }
 });

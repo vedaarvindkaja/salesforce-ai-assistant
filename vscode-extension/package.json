@@ -20,6 +20,11 @@
       { "command": "salesforceGraph.checkConnection", "title": "Salesforce Graph: Check API Connection" }
     ],
     "menus": {
+      "commandPalette": [
+        { "command": "salesforceGraph.explainApex", "when": "resourceExtname == '.cls' || resourceExtname == '.trigger'" },
+        { "command": "salesforceGraph.deploymentImpact", "when": "resourceExtname == '.cls' || resourceExtname == '.trigger'" },
+        { "command": "salesforceGraph.analyzeDebugLog", "when": "resourceExtname == '.log'" }
+      ],
       "editor/context": [
         {
           "command": "salesforceGraph.explainApex",
