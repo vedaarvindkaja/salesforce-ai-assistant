@@ -15,8 +15,22 @@
       {
         "command": "salesforceGraph.ask",
         "title": "Salesforce Graph: Ask"
+      },
+      {
+        "command": "salesforceGraph.checkConnection",
+        "title": "Salesforce Graph: Check API Connection"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Salesforce Graph",
+      "properties": {
+        "salesforceGraph.apiBaseUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8000",
+          "description": "Base URL of the local Salesforce Graph REST API (uvicorn). Use 127.0.0.1 rather than localhost to avoid IPv6 resolution delays on Windows."
+        }
+      }
+    }
   },
   "scripts": {
     "build": "node esbuild.js",
