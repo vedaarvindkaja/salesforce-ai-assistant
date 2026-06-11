@@ -1,13 +1,16 @@
 // Thin, hand-rolled REST client for the Salesforce Graph API.
 //
 // Deliberately free of the `vscode` module so it stays unit-testable in plain
-// Node later (mirrors the backend's pure-parser discipline: this is I/O glue,
-// not editor coupling). All vscode interaction lives in extension.ts.
+// Node (mirrors the backend's pure-parser discipline: I/O glue, not editor
+// coupling). The Renderer dependency is a type-only import, so it adds no
+// runtime coupling. All vscode interaction lives in extension.ts / renderer.ts.
 //
 // Python/Apex bridge: think of this as an Apex class wrapping
 // Http/HttpRequest/HttpResponse that hands back a typed result wrapper instead
-// of a raw response. Callers switch on result.status; they never inspect status
-// codes or catch exceptions themselves.
+// of a raw response.
+
+import { SSEParser, type ServerSentEvent } from "./sse";
+import type { Renderer } from "./renderer";
 
 /** Mirror of the REST `GraphSummary` Pydantic model (routes/graph.py). */
 export interface GraphSummary {
@@ -19,30 +22,36 @@ export interface GraphSummary {
 }
 
 /**
- * The states the API can be in. A discriminated union: the `status` field tells
- * the caller which other fields exist (TypeScript's version of a sealed result
- * type / tagged enum). The compiler forces the caller to handle each case.
+ * States the API can be in. A discriminated union: the `status` field tells the
+ * caller which other fields exist (TypeScript's sealed result type / tagged
+ * enum). The compiler forces the caller to handle each case.
  */
 export type ProbeResult =
-  | { status: "ready"; summary: GraphSummary } // 200: graph loaded
-  | { status: "not-ready"; detail: string } // 503: server up, graph absent
-  | { status: "unreachable"; detail: string } // fetch threw: server down/timeout
-  | { status: "http-error"; detail: string }; // any other non-OK status
+  | { status: "ready"; summary: GraphSummary }
+  | { status: "not-ready"; detail: string }
+  | { status: "unreachable"; detail: string }
+  | { status: "http-error"; detail: string };
+
+/** Request body for the question-shaped capability routes (CapabilityRequest). */
+export interface CapabilityBody {
+  question: string;
+}
 
 const GRAPH_PATH = "/api/v1/graph";
-const TIMEOUT_MS = 5000;
+const PROBE_TIMEOUT_MS = 5000;
+
+function joinUrl(baseUrl: string, path: string): string {
+  return baseUrl.replace(/\/+$/, "") + path;
+}
 
 /**
  * Probe API readiness via the zero-cost GET /api/v1/graph. Never throws: every
- * failure mode is mapped to a ProbeResult variant so the caller branches
- * declaratively. The AbortController bounds a hung connection (like
- * HttpRequest.setTimeout in Apex / a cancellation token).
+ * failure mode maps to a ProbeResult variant so the caller branches declaratively.
  */
 export async function fetchGraphSummary(baseUrl: string): Promise<ProbeResult> {
-  const url = baseUrl.replace(/\/+$/, "") + GRAPH_PATH;
-
+  const url = joinUrl(baseUrl, GRAPH_PATH);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
 
   let response: Response;
   try {
@@ -52,10 +61,8 @@ export async function fetchGraphSummary(baseUrl: string): Promise<ProbeResult> {
       signal: controller.signal,
     });
   } catch (err) {
-    // Network-level failure: connection refused (uvicorn not running) or the
-    // abort above fired. This is the "server down / unreachable" branch.
     const detail = controller.signal.aborted
-      ? `No response within ${TIMEOUT_MS / 1000}s from ${baseUrl}.`
+      ? `No response within ${PROBE_TIMEOUT_MS / 1000}s from ${baseUrl}.`
       : err instanceof Error
         ? err.message
         : String(err);
@@ -65,7 +72,6 @@ export async function fetchGraphSummary(baseUrl: string): Promise<ProbeResult> {
   }
 
   if (response.status === 503) {
-    // Precondition gate (503-not-401): server is up, graph isn't loaded.
     let detail = "metadata graph not loaded";
     try {
       const body = (await response.json()) as { detail?: string };
@@ -73,7 +79,7 @@ export async function fetchGraphSummary(baseUrl: string): Promise<ProbeResult> {
         detail = body.detail;
       }
     } catch {
-      // Non-JSON body; keep the default detail.
+      // non-JSON body; keep the default detail
     }
     return { status: "not-ready", detail };
   }
@@ -87,4 +93,97 @@ export async function fetchGraphSummary(baseUrl: string): Promise<ProbeResult> {
 
   const summary = (await response.json()) as GraphSummary;
   return { status: "ready", summary };
+}
+
+/**
+ * POST to a streaming capability route and push the Server-Sent Events to the
+ * renderer as they arrive. The REST routes are POST with a JSON body, so we use
+ * fetch + a streaming body reader rather than the browser EventSource API (which
+ * is GET-only and runs in a browser, not the Node extension host). Never throws:
+ * failures are reported through renderer.error.
+ */
+export async function streamCapability(
+  baseUrl: string,
+  path: string,
+  body: CapabilityBody,
+  renderer: Renderer,
+  signal?: AbortSignal
+): Promise<void> {
+  const url = joinUrl(baseUrl, path);
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+      },
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch (err) {
+    if (signal?.aborted) {
+      return; // user cancelled before the response arrived
+    }
+    renderer.error(
+      `Can't reach the API at ${baseUrl}. Is it running ` +
+        `(uvicorn app.main:app --reload, from backend/)? ` +
+        (err instanceof Error ? err.message : String(err))
+    );
+    return;
+  }
+
+  if (response.status === 503) {
+    renderer.error("The API is up but the metadata graph isn't loaded (503).");
+    return;
+  }
+  if (!response.ok || !response.body) {
+    renderer.error(
+      `Unexpected response: HTTP ${response.status} ${response.statusText}`
+    );
+    return;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const parser = new SSEParser();
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      for (const evt of parser.feed(decoder.decode(value, { stream: true }))) {
+        dispatch(evt, renderer);
+      }
+    }
+    const tail = decoder.decode(); // flush any trailing bytes
+    if (tail) {
+      for (const evt of parser.feed(tail)) {
+        dispatch(evt, renderer);
+      }
+    }
+  } catch (err) {
+    if (signal?.aborted) {
+      return; // user cancelled mid-stream; backend sees the disconnect and stops
+    }
+    renderer.error(err instanceof Error ? err.message : String(err));
+  }
+}
+
+function dispatch(evt: ServerSentEvent, renderer: Renderer): void {
+  switch (evt.event) {
+    case "chunk":
+      renderer.appendChunk(evt.data);
+      break;
+    case "done":
+      renderer.done();
+      break;
+    case "error":
+      renderer.error(evt.data);
+      break;
+    // ping/heartbeat and any unknown event types: ignore.
+  }
 }

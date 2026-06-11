@@ -3305,4 +3305,32 @@ client pulled forward. API-key auth still parked (trigger: >1 user).
 Next (Day 3): hand-rolled SSE consumer (fetch streaming, NOT EventSource — POST
 routes) + pure frame parser (unit-tested) + Renderer seam + OutputChannel
 renderer -> first streaming capability (metadata-qa) end to end.
+
+## Week 13 Day 3 — SSE streaming + Renderer seam + first live capability
+
+- src/sse.ts: PURE incremental SSE frame parser (no fetch/vscode), unit-tested
+  with vitest (8 cases). Handles spec edge cases: multi-data-line values rejoined
+  with \n, frames split across byte-chunk boundaries (buffered), CRLF normalized,
+  ": ping" heartbeat comments ignored. The pure-parser-with-tests discipline,
+  ported from the backend debuglog parser to TS.
+- src/renderer.ts: Renderer seam (note-1). Interface start/appendChunk/done/error
+  maps 1:1 onto the SSE lifecycle. OutputChannelRenderer implements it now;
+  Day-4 webview implements the SAME interface -> renderer swap, not a rewrite
+  (dependency inversion). client.ts depends on the interface (type-only import),
+  never the concrete UI.
+- src/client.ts: streamCapability() — POST + fetch streaming body reader (NOT
+  EventSource: routes are POST, host is Node not a browser). Feeds bytes ->
+  SSEParser -> dispatch to renderer (chunk/done/error; unknown events ignored).
+  Optional AbortSignal -> cancellation -> backend disconnect-cancel (cost control).
+  Stays runtime vscode-free (verified: 0 vscode imports).
+- src/extension.ts: salesforceGraph.ask now does input box -> renderer.start ->
+  stream into "Salesforce Graph" OutputChannel, in a cancellable progress notif.
+- Testing: vitest added (npm test = vitest run). First automated tests on the
+  TS surface. 8/8 green.
+- Build green: dist/extension.js ~9.2kb; tsc --noEmit clean.
+- Verified live: metadata-qa streams token-by-token from Claude into the editor;
+  uvicorn logs POST /api/v1/metadata-qa 200. Spine fully alive end to end.
+
+Next (Day 4): webview renderer implementing the SAME Renderer interface (the
+swap note-1 set up) -> a real panel for Week-14 README screenshots.
 ---

@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 
-import { fetchGraphSummary } from "./client";
+import { fetchGraphSummary, streamCapability } from "./client";
+import { OutputChannelRenderer } from "./renderer";
 
 const DEFAULT_BASE_URL = "http://127.0.0.1:8000";
 
@@ -12,7 +13,7 @@ function getApiBaseUrl(): string {
   return configured && configured.trim() ? configured.trim() : DEFAULT_BASE_URL;
 }
 
-/** Run the readiness probe and report each of the three states to the user. */
+/** Readiness probe (Day 2): report each of the three API states to the user. */
 async function checkConnection(): Promise<void> {
   const baseUrl = getApiBaseUrl();
 
@@ -53,17 +54,55 @@ async function checkConnection(): Promise<void> {
   }
 }
 
-export function activate(context: vscode.ExtensionContext): void {
-  const ask = vscode.commands.registerCommand("salesforceGraph.ask", () => {
-    vscode.window.showInformationMessage("Salesforce Graph extension is alive.");
+/** Ask a metadata-graph question and stream the answer into the OutputChannel. */
+async function askMetadataQuestion(renderer: OutputChannelRenderer): Promise<void> {
+  const question = await vscode.window.showInputBox({
+    title: "Salesforce Graph: Ask",
+    prompt: "Ask a question about your org's metadata graph.",
+    placeHolder: "Which Apex classes reference AccountTriggerHandler?",
+    ignoreFocusOut: true,
   });
+  const trimmed = question?.trim();
+  if (!trimmed) {
+    return; // cancelled or empty
+  }
 
+  const baseUrl = getApiBaseUrl();
+  renderer.start(`Q: ${trimmed}`);
+
+  await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: "Asking the metadata graph...",
+      cancellable: true,
+    },
+    async (_progress, token) => {
+      const controller = new AbortController();
+      token.onCancellationRequested(() => controller.abort());
+      await streamCapability(
+        baseUrl,
+        "/api/v1/metadata-qa",
+        { question: trimmed },
+        renderer,
+        controller.signal
+      );
+    }
+  );
+}
+
+export function activate(context: vscode.ExtensionContext): void {
+  const channel = vscode.window.createOutputChannel("Salesforce Graph");
+  const renderer = new OutputChannelRenderer(channel);
+
+  const ask = vscode.commands.registerCommand("salesforceGraph.ask", () =>
+    askMetadataQuestion(renderer)
+  );
   const connection = vscode.commands.registerCommand(
     "salesforceGraph.checkConnection",
     checkConnection
   );
 
-  context.subscriptions.push(ask, connection);
+  context.subscriptions.push(channel, ask, connection);
 }
 
 export function deactivate(): void {
