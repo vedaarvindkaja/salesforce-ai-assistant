@@ -12,15 +12,32 @@
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
-      {
-        "command": "salesforceGraph.ask",
-        "title": "Salesforce Graph: Ask"
-      },
-      {
-        "command": "salesforceGraph.checkConnection",
-        "title": "Salesforce Graph: Check API Connection"
-      }
+      { "command": "salesforceGraph.ask", "title": "Salesforce Graph: Ask" },
+      { "command": "salesforceGraph.explainApex", "title": "Salesforce Graph: Explain Current Apex File" },
+      { "command": "salesforceGraph.deploymentImpact", "title": "Salesforce Graph: Deployment Impact of Current File" },
+      { "command": "salesforceGraph.generateSoql", "title": "Salesforce Graph: Generate SOQL" },
+      { "command": "salesforceGraph.analyzeDebugLog", "title": "Salesforce Graph: Analyze Debug Log File" },
+      { "command": "salesforceGraph.checkConnection", "title": "Salesforce Graph: Check API Connection" }
     ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "salesforceGraph.explainApex",
+          "when": "resourceExtname == '.cls' || resourceExtname == '.trigger'",
+          "group": "salesforceGraph@1"
+        },
+        {
+          "command": "salesforceGraph.deploymentImpact",
+          "when": "resourceExtname == '.cls' || resourceExtname == '.trigger'",
+          "group": "salesforceGraph@2"
+        },
+        {
+          "command": "salesforceGraph.analyzeDebugLog",
+          "when": "resourceExtname == '.log'",
+          "group": "salesforceGraph@1"
+        }
+      ]
+    },
     "configuration": {
       "title": "Salesforce Graph",
       "properties": {

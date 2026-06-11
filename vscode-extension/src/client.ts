@@ -1,13 +1,8 @@
 // Thin, hand-rolled REST client for the Salesforce Graph API.
 //
 // Deliberately free of the `vscode` module so it stays unit-testable in plain
-// Node (mirrors the backend's pure-parser discipline: I/O glue, not editor
-// coupling). The Renderer dependency is a type-only import, so it adds no
-// runtime coupling. All vscode interaction lives in extension.ts / renderer.ts.
-//
-// Python/Apex bridge: think of this as an Apex class wrapping
-// Http/HttpRequest/HttpResponse that hands back a typed result wrapper instead
-// of a raw response.
+// Node (mirrors the backend's pure-parser discipline). The Renderer dependency
+// is a type-only import, so it adds no runtime coupling.
 
 import { SSEParser, type ServerSentEvent } from "./sse";
 import type { Renderer } from "./renderer";
@@ -21,21 +16,25 @@ export interface GraphSummary {
   edge_type_counts: Record<string, number>;
 }
 
-/**
- * States the API can be in. A discriminated union: the `status` field tells the
- * caller which other fields exist (TypeScript's sealed result type / tagged
- * enum). The compiler forces the caller to handle each case.
- */
 export type ProbeResult =
   | { status: "ready"; summary: GraphSummary }
   | { status: "not-ready"; detail: string }
   | { status: "unreachable"; detail: string }
   | { status: "http-error"; detail: string };
 
-/** Request body for the question-shaped capability routes (CapabilityRequest). */
+/** Body for the question-shaped capability routes (CapabilityRequest). */
 export interface CapabilityBody {
   question: string;
 }
+
+/** Body for the debug-log route (DebugLogRequest) — a log REFERENCE (ADR-017). */
+export interface DebugLogBody {
+  log_path: string;
+  question?: string;
+}
+
+/** Any capability request body — streamCapability only serializes it. */
+export type RequestBody = CapabilityBody | DebugLogBody;
 
 const GRAPH_PATH = "/api/v1/graph";
 const PROBE_TIMEOUT_MS = 5000;
@@ -44,10 +43,7 @@ function joinUrl(baseUrl: string, path: string): string {
   return baseUrl.replace(/\/+$/, "") + path;
 }
 
-/**
- * Probe API readiness via the zero-cost GET /api/v1/graph. Never throws: every
- * failure mode maps to a ProbeResult variant so the caller branches declaratively.
- */
+/** Probe API readiness via the zero-cost GET /api/v1/graph. Never throws. */
 export async function fetchGraphSummary(baseUrl: string): Promise<ProbeResult> {
   const url = joinUrl(baseUrl, GRAPH_PATH);
   const controller = new AbortController();
@@ -97,15 +93,13 @@ export async function fetchGraphSummary(baseUrl: string): Promise<ProbeResult> {
 
 /**
  * POST to a streaming capability route and push the Server-Sent Events to the
- * renderer as they arrive. The REST routes are POST with a JSON body, so we use
- * fetch + a streaming body reader rather than the browser EventSource API (which
- * is GET-only and runs in a browser, not the Node extension host). Never throws:
- * failures are reported through renderer.error.
+ * renderer as they arrive. POST + fetch streaming body reader (not EventSource:
+ * GET-only, browser-only). Never throws: failures go through renderer.error.
  */
 export async function streamCapability(
   baseUrl: string,
   path: string,
-  body: CapabilityBody,
+  body: RequestBody,
   renderer: Renderer,
   signal?: AbortSignal
 ): Promise<void> {
@@ -124,7 +118,7 @@ export async function streamCapability(
     });
   } catch (err) {
     if (signal?.aborted) {
-      return; // user cancelled before the response arrived
+      return;
     }
     renderer.error(
       `Can't reach the API at ${baseUrl}. Is it running ` +
@@ -136,6 +130,10 @@ export async function streamCapability(
 
   if (response.status === 503) {
     renderer.error("The API is up but the metadata graph isn't loaded (503).");
+    return;
+  }
+  if (response.status === 422) {
+    renderer.error("The API rejected the request (422 — invalid input).");
     return;
   }
   if (!response.ok || !response.body) {
@@ -159,7 +157,7 @@ export async function streamCapability(
         dispatch(evt, renderer);
       }
     }
-    const tail = decoder.decode(); // flush any trailing bytes
+    const tail = decoder.decode();
     if (tail) {
       for (const evt of parser.feed(tail)) {
         dispatch(evt, renderer);
@@ -167,7 +165,7 @@ export async function streamCapability(
     }
   } catch (err) {
     if (signal?.aborted) {
-      return; // user cancelled mid-stream; backend sees the disconnect and stops
+      return;
     }
     renderer.error(err instanceof Error ? err.message : String(err));
   }
@@ -184,6 +182,5 @@ function dispatch(evt: ServerSentEvent, renderer: Renderer): void {
     case "error":
       renderer.error(evt.data);
       break;
-    // ping/heartbeat and any unknown event types: ignore.
   }
 }

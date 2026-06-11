@@ -3359,4 +3359,32 @@ swap note-1 set up) -> a real panel for Week-14 README screenshots.
 Next (Day 5): broaden capabilities in-editor (apex/impact/debuglog with editor-
 context binding: explain current Apex file, impact on selection, analyze open
 .log) — each is the same client + same renderer + a different route/input.
+
+## Week 13 Day 5 — All five capabilities in-editor
+
+- Architecture held: 4 capabilities added with ZERO plumbing changes. sse.ts,
+  renderer.ts, streaming core untouched. Each capability = a route + an input
+  source, through one shared runCapability(renderer, title, path, body)
+  (template-method; mirrors the backend _capability_response seam).
+- client.ts: added DebugLogBody{log_path, question?} + RequestBody union so
+  streamCapability serializes either the question-shaped body or the debug-log
+  reference body (ADR-017 asymmetry). Added 422 handling.
+- extension.ts: 4 new commands + editor-context input helpers:
+  * explainApex — active .cls/.trigger -> class name -> apex-explain
+  * deploymentImpact — active Apex component name -> deployment-impact
+  * generateSoql — free-text input -> soql-generate
+  * analyzeDebugLog — active .log fsPath -> debug-log-analysis (server-readable:
+    same machine; path sent, parsed/correlated server-side)
+- package.json: 4 commands + editor/context right-click menus gated by
+  resourceExtname ('.cls'/'.trigger' -> explain+impact; '.log' -> analyze).
+  resourceExtname (not editorLangId==apex) so menus work without the Salesforce
+  Apex extension installed.
+- Build green: extension.js ~16.6kb; webview unchanged; dual typecheck clean;
+  vitest 8/8.
+- Verified live: all 4 new routes stream 200; right-click context menus on .cls
+  and .log work. All 5 capabilities now reachable in-editor.
+
+Next (Day 6): polish — palette enablement/when for the file-bound commands,
+loading/empty states, README screenshots inventory; then Day 7 .vsix packaging.
+ROADMAP reconcile at week-end.
 ---
