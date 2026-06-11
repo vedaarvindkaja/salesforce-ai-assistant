@@ -1,0 +1,32 @@
+{
+  "name": "salesforce-graph",
+  "displayName": "Salesforce Graph",
+  "description": "In-editor access to the Salesforce AI metadata-graph intelligence platform.",
+  "version": "0.0.1",
+  "publisher": "veda-dev",
+  "private": true,
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": ["Other"],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "salesforceGraph.ask",
+        "title": "Salesforce Graph: Ask"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/vscode": "^1.90.0",
+    "esbuild": "^0.23.0",
+    "typescript": "^5.5.0"
+  }
+}

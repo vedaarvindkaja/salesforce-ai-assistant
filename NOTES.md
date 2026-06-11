@@ -3237,4 +3237,48 @@ Honest deltas:
 
 ### Week 13 readiness: REST API is the extension's spine; /docs exposes the
   typed routes (incl. DebugLogRequest) the extension generates its client from.
+
+## Week 13 Day 1 — VS Code extension scaffold (first non-Python surface)
+
+Architecture (kickoff, resolved before code):
+- MVP surface = metadata-qa, command palette -> input box -> OutputChannel
+  streaming. Cheapest renderer that proves the spine; webview + editor-context
+  binding deferred to later days THIS week.
+- Connection model = assume uvicorn running; readiness probe GET /api/v1/graph
+  (200 ready / 503 "metadata graph not loaded" / ECONNREFUSED down). Extension
+  does NOT manage the server process (parked: trigger = packaging for non-author
+  users, downstream of the multi-user auth trigger).
+- Typed client = hand-rolled thin client, NOT OpenAPI codegen. Surface too small
+  (2 request models) and SSE responses defeat codegen. Revisit trigger: >~10
+  models.
+- SSE consumed via fetch streaming, NOT EventSource (routes are POST). Frame
+  parser kept pure + unit-tested, mirroring the debuglog parser discipline.
+- Renderer seam: SSE/client talk to a Renderer interface (start/appendChunk/
+  done/error == chunk/done/error events). OutputChannel renderer Day 3; webview
+  renderer Day 4 is then a renderer swap, not a plumbing rewrite. Webview is a
+  named deliverable this week for Week-14 README screenshots.
+- Stack: vscode-extension/ at repo root (Node module beside backend/);
+  esbuild bundle + tsc --noEmit typecheck; hand-scaffolded (not yo code).
+  vsce/.vsix packaging deferred to week-end.
+
+Shipped Day 1:
+- Scaffold: package.json (1 command: salesforceGraph.ask), tsconfig (strict),
+  esbuild.js (external: vscode), src/extension.ts (activate/deactivate),
+  .gitignore, .vscode/launch.json.
+- npm install + npm run build + npm run typecheck all green; dist/extension.js
+  emitted (~2kb). F5 -> Extension Dev Host -> command fires -> info message.
+  TS toolchain proven on Windows.
+- Windows first-run gotchas cleared: PATH stale after Node install (new shell
+  needed); PowerShell execution policy Restricted blocked npm.ps1 (fixed:
+  Set-ExecutionPolicy -Scope CurrentUser RemoteSigned); VS Code integrated
+  terminal defaulted to cmd not PowerShell (Test-Path/Select-String failed
+  there) -> set default profile to PowerShell. F5 was intercepted by a system
+  overlay; Run -> Start Debugging is the reliable launch path.
+- npm audit flags 1 moderate (esbuild dev-server advisory): ignored by design,
+  build-time-only tool, NOT npm audit fix --force.
+
+Next (Day 2): apiBaseUrl setting + readiness-probe command against GET
+/api/v1/graph; three-state handling (ready / 503 not-ready / connection-refused).
+
+
 ---
