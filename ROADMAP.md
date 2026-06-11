@@ -902,54 +902,42 @@ debug-log capability (Days 3-5). ADRs 015/016/017.
 - Option-B / ADR-014 (tool-pull vs pre-loaded) -> trigger: a capability
   measurably fails because tool-pull missed context.
 
-### Next: Week 13 — VS Code extension (the REST API is its spine).
-  README rewrite Week 14 Day 2; Phase-1 portfolio milestone Week 15.
----
+#### Week 13 — VS Code extension (SHIPPED)
 
-#### Week 13 — VS Code extension (20 hours)
+Goal: in-editor access to all 5 capabilities over the REST API spine.
 
-**Goal:** Working VS Code extension with the 5 capabilities.
+- Day 1: Hand-scaffolded extension (esbuild bundle + tsc typecheck; NOT Yeoman).
+  Build/run loop proven on Windows.
+- Day 2: salesforceGraph.apiBaseUrl setting + readiness-probe command. Three-state
+  model (ready 200 / not-ready 503 / unreachable) — first consumer of 503-not-401.
+- Day 3: Hand-rolled SSE client (POST + fetch streaming, not EventSource) + pure
+  SSEParser (8 vitest cases) + Renderer seam (dependency inversion) + OutputChannel
+  renderer. metadata-qa streams live.
+- Day 4: WebviewRenderer (same Renderer interface) — marked Markdown, CSP+nonce,
+  ready-handshake. salesforceGraph.renderer setting toggles webview/output.
+- Day 5: All 5 capabilities in-editor (apex/impact/soql/debuglog) via shared
+  runCapability + editor-context right-click menus (resourceExtname-gated).
+- Day 6: Polish — palette when-clauses, webview loading/empty/cancel states,
+  status-bar connection indicator.
+- Day 7: .vsix packaged (v0.1.0, vsce, .vscodeignore — dist-only, ~19 KB).
 
-**Day 1-2 (6 hours)** — Extension scaffolding
-- Yeoman generator for VS Code extension
-- TypeScript setup with esbuild
-- Activation events and contribution points
-- Settings UI for API key
+Deliverables: working extension, all 5 capabilities from palette + right-click,
+themed webview, packaged .vsix. DONE.
 
-**Day 3 (4 hours)** — Command palette commands
-- Command: "SF Intelligence: Ask Metadata Question"
-- Command: "SF Intelligence: Explain Selected Apex"
-- Command: "SF Intelligence: Generate SOQL from Description"
-- Command: "SF Intelligence: Analyze Deployment Impact"
-- Command: "SF Intelligence: Analyze Debug Log"
+Deferred (not in the reconciled Phase-1 scope):
+- Sidebar tree view / org metadata browser -> Phase 2 enhancement (command +
+  webview surface is sufficient for the portfolio milestone).
+- Keyboard shortcuts -> optional; deferred (avoid default-keybinding collisions).
+- API-key auth / per-user packaging -> parked (trigger: >1 user).
+- Extension manages the uvicorn process -> parked (trigger: packaging for users
+  who don't run the backend).
 
-**Day 4 (4 hours)** — Sidebar UI
-- Activity bar icon
-- Tree view: org metadata browser
-- Webview for chat-style interactions
-- Streaming response display
+Counts at Week-13 close: extension with 6 commands, 2 settings, 8 TS unit tests
+(SSE parser); backend unchanged (57/172 graph, 344 tests + 25 evals, 5 capabilities,
+4 transports: CLI + MCP + REST + VS Code extension).
 
-**Day 5 (3 hours)** — REST API client
-- HTTP client wrapping the FastAPI backend
-- SSE handling for streaming
-- Error handling with user-friendly messages
-
-**Day 6 (2 hours)** — Polish
-- Loading states
-- Error messages
-- Keyboard shortcuts
-- Settings persistence
-
-**Day 7 (1 hour)** — Build + commit
-- esbuild bundling
-- Package .vsix file for distribution
-- Plan Week 14
-
-**Deliverables:**
-- ✅ Working VS Code extension
-- ✅ All 5 capabilities accessible from command palette
-- ✅ Sidebar UI for metadata exploration
-- ✅ Packaged .vsix ready for distribution
+Next: Week 14 — README rewrite (Day 2, screenshots now exist) + docs polish;
+Week 15 — Phase 1 portfolio milestone.
 
 ---
 

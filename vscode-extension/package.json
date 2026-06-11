@@ -2,8 +2,9 @@
   "name": "salesforce-graph",
   "displayName": "Salesforce Graph",
   "description": "In-editor access to the Salesforce AI metadata-graph intelligence platform.",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "publisher": "veda-dev",
+  "license": "MIT",
   "private": true,
   "engines": {
     "vscode": "^1.90.0"
@@ -68,11 +69,14 @@
     "build": "node esbuild.js",
     "watch": "node esbuild.js --watch",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.webview.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "vscode:prepublish": "node esbuild.js --production",
+    "package": "vsce package --allow-missing-repository"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
     "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^2.31.0",
     "esbuild": "^0.23.0",
     "marked": "^12.0.0",
     "typescript": "^5.5.0",

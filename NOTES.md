@@ -3408,4 +3408,34 @@ ROADMAP reconcile at week-end.
 
 Next (Day 7): .vsix packaging (vsce), .vscodeignore, final build/commit, Week-13
 retro + ROADMAP reconcile (Yeoman/API-key/Day-5-client stale entries -> actual).
+
+## Week 13 Day 7 — .vsix packaging + Week-13 retro
+
+Shipped Day 7:
+- package.json -> v0.1.0, license MIT, vscode:prepublish (--production build),
+  package script (vsce package --allow-missing-repository). @vscode/vsce devDep.
+- README.md (extension package README; distinct from frozen root README).
+- .vscodeignore: ships dist/*.js + package.json + README + LICENSE only;
+  excludes src/node_modules/maps/tests/configs. Verified: .vsix is 7 files, ~19 KB,
+  no source/deps/maps leaked.
+- LICENSE copied from repo root into the extension folder.
+- Installed the packaged .vsix into real VS Code and ran a capability end to end.
+
+Week-13 retrospective:
+- Shipped: full VS Code extension, 4th transport on the REST spine. 5 capabilities
+  in-editor (palette + right-click), themed streaming webview, packaged .vsix v0.1.0.
+- Architecture that paid off: the Renderer seam (Day 3) absorbed the entire webview
+  swap (Day 4) with zero plumbing changes, and the shared runCapability absorbed
+  4 capabilities on Day 5 touching only the command layer. The Day-2 typed client +
+  Day-3 pure SSE parser held through every later addition.
+- First non-Python surface landed: TS/Node/esbuild/vsce, split node/DOM tsconfigs,
+  vitest. 8 SSE-parser unit tests are the first automated tests on the TS side.
+- Windows toolchain lessons (one-time): PATH-stale-after-Node-install, PowerShell
+  execution policy (RemoteSigned), integrated terminal defaulting to cmd, F5 eaten
+  by a system overlay (Run -> Start Debugging instead), extension-folder-as-its-own-
+  window for launch.json. None recurred after Day 1-2.
+- Deferred with reasons: tree view (Phase 2), keybindings (optional), API-key auth
+  + process management (parked, triggers unmet).
+
+ROADMAP reconciled (Yeoman/API-key-UI/sidebar/Day-5-client stale entries -> actual).
 ---
