@@ -1,10 +1,12 @@
-// Build script for the VS Code extension (esbuild).
+// Build script (esbuild) — two bundles:
+//   1) dist/extension.js  — the Node extension host (vscode is external)
+//   2) dist/webview.js     — the browser-context webview script (marked bundled)
 const esbuild = require("esbuild");
 
 const watch = process.argv.includes("--watch");
 const production = process.argv.includes("--production");
 
-const options = {
+const extensionConfig = {
   entryPoints: ["src/extension.ts"],
   bundle: true,
   format: "cjs",
@@ -17,14 +19,27 @@ const options = {
   logLevel: "info",
 };
 
+const webviewConfig = {
+  entryPoints: ["src/webview/main.ts"],
+  bundle: true,
+  format: "iife",
+  platform: "browser",
+  target: "es2020",
+  outfile: "dist/webview.js",
+  sourcemap: !production,
+  minify: production,
+  logLevel: "info",
+};
+
 async function main() {
+  const configs = [extensionConfig, webviewConfig];
   if (watch) {
-    const ctx = await esbuild.context(options);
-    await ctx.watch();
+    const ctxs = await Promise.all(configs.map((c) => esbuild.context(c)));
+    await Promise.all(ctxs.map((c) => c.watch()));
     console.log("esbuild: watching for changes...");
   } else {
-    await esbuild.build(options);
-    console.log("esbuild: build complete -> dist/extension.js");
+    await Promise.all(configs.map((c) => esbuild.build(c)));
+    console.log("esbuild: build complete -> dist/extension.js + dist/webview.js");
   }
 }
 

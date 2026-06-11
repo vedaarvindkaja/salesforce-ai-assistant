@@ -3333,4 +3333,30 @@ renderer -> first streaming capability (metadata-qa) end to end.
 
 Next (Day 4): webview renderer implementing the SAME Renderer interface (the
 swap note-1 set up) -> a real panel for Week-14 README screenshots.
+
+## Week 13 Day 4 — Webview renderer (the Renderer seam pays off)
+
+- WebviewRenderer (src/renderer.ts) implements the SAME Renderer interface as
+  OutputChannelRenderer — client.ts/sse.ts/sse.test.ts UNTOUCHED. Proof of
+  note-1: a whole new rendering surface = zero plumbing changes (dependency
+  inversion validated).
+- Webview hazards handled: strict CSP + per-load nonce; load-race ready-handshake
+  (buffer outbound messages until webview posts {type:"ready"}, then flush) so
+  first tokens are never dropped on a cold panel.
+- src/webview/main.ts: browser-context client script, bundled with marked to
+  dist/webview.js. Re-renders full markdown buffer per chunk -> formatted tables/
+  code blocks; themed with --vscode-* CSS vars to match the user's theme.
+- Two-bundle esbuild (extension cjs/node + webview iife/browser). Split tsconfigs:
+  tsconfig.json (node, excludes src/webview) + tsconfig.webview.json (adds DOM
+  lib, only src/webview). typecheck runs both -> fetch/Response stay node-typed,
+  webview gets DOM. npm test still 8/8.
+- salesforceGraph.renderer setting (webview|output, default webview): same SSE
+  stream routes to either renderer at runtime — the seam made switchable.
+- Verified live: metadata-qa renders as formatted Markdown in a themed panel
+  beside the editor; renderer setting toggles surface with no plumbing change.
+  README screenshot captured.
+
+Next (Day 5): broaden capabilities in-editor (apex/impact/debuglog with editor-
+context binding: explain current Apex file, impact on selection, analyze open
+.log) — each is the same client + same renderer + a different route/input.
 ---

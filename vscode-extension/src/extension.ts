@@ -1,11 +1,14 @@
 import * as vscode from "vscode";
 
 import { fetchGraphSummary, streamCapability } from "./client";
-import { OutputChannelRenderer } from "./renderer";
+import {
+  OutputChannelRenderer,
+  Renderer,
+  WebviewRenderer,
+} from "./renderer";
 
 const DEFAULT_BASE_URL = "http://127.0.0.1:8000";
 
-/** Read the configured API base URL, falling back to the default. */
 function getApiBaseUrl(): string {
   const configured = vscode.workspace
     .getConfiguration("salesforceGraph")
@@ -54,8 +57,11 @@ async function checkConnection(): Promise<void> {
   }
 }
 
-/** Ask a metadata-graph question and stream the answer into the OutputChannel. */
-async function askMetadataQuestion(renderer: OutputChannelRenderer): Promise<void> {
+/** Ask a metadata-graph question and stream the answer to the chosen renderer. */
+async function askMetadataQuestion(
+  webviewRenderer: WebviewRenderer,
+  outputRenderer: OutputChannelRenderer
+): Promise<void> {
   const question = await vscode.window.showInputBox({
     title: "Salesforce Graph: Ask",
     prompt: "Ask a question about your org's metadata graph.",
@@ -64,8 +70,15 @@ async function askMetadataQuestion(renderer: OutputChannelRenderer): Promise<voi
   });
   const trimmed = question?.trim();
   if (!trimmed) {
-    return; // cancelled or empty
+    return;
   }
+
+  // Same SSE stream, renderer chosen at runtime — the seam made tangible.
+  const choice = vscode.workspace
+    .getConfiguration("salesforceGraph")
+    .get<string>("renderer");
+  const renderer: Renderer =
+    choice === "output" ? outputRenderer : webviewRenderer;
 
   const baseUrl = getApiBaseUrl();
   renderer.start(`Q: ${trimmed}`);
@@ -92,10 +105,11 @@ async function askMetadataQuestion(renderer: OutputChannelRenderer): Promise<voi
 
 export function activate(context: vscode.ExtensionContext): void {
   const channel = vscode.window.createOutputChannel("Salesforce Graph");
-  const renderer = new OutputChannelRenderer(channel);
+  const outputRenderer = new OutputChannelRenderer(channel);
+  const webviewRenderer = new WebviewRenderer(context.extensionUri);
 
   const ask = vscode.commands.registerCommand("salesforceGraph.ask", () =>
-    askMetadataQuestion(renderer)
+    askMetadataQuestion(webviewRenderer, outputRenderer)
   );
   const connection = vscode.commands.registerCommand(
     "salesforceGraph.checkConnection",
