@@ -3280,5 +3280,29 @@ Shipped Day 1:
 Next (Day 2): apiBaseUrl setting + readiness-probe command against GET
 /api/v1/graph; three-state handling (ready / 503 not-ready / connection-refused).
 
+## Week 13 Day 2 — API connection model + readiness probe
 
+- Setting salesforceGraph.apiBaseUrl (default http://127.0.0.1:8000). 127.0.0.1
+  not localhost: dodges Windows IPv6 (::1) resolution stall vs uvicorn's IPv4 bind.
+- src/client.ts: hand-rolled thin client, vscode-free (unit-testable later, like
+  the pure debuglog parser). fetchGraphSummary() returns a discriminated union
+  ProbeResult {ready|not-ready|unreachable|http-error} instead of throwing —
+  caller switches on .status, compiler enforces exhaustiveness. AbortController
+  5s timeout bounds a hung connection.
+- Three-state mapping onto the REST contract: fetch throw -> unreachable;
+  503 -> not-ready (the precondition gate, first consumer of 503-not-401);
+  200 -> ready (parse GraphSummary, show node/edge counts).
+- GraphSummary TS interface mirrors routes/graph.py field-for-field
+  (org_key, node_count, edge_count, node_type_counts, edge_type_counts).
+- Verified live: unreachable (server off) + ready ("Connected to <org> — 57
+  nodes / 172 edges") end to end. [503 path = backend hermetic tests.]
+- Build green: dist/extension.js ~4.6kb; tsc --noEmit clean.
+
+ROADMAP reconcile (week-end): stale Week-13 detail (Yeoman, API-key Settings UI,
+Day-5 client) superseded by kickoff — hand-scaffold, apiBaseUrl not API key,
+client pulled forward. API-key auth still parked (trigger: >1 user).
+
+Next (Day 3): hand-rolled SSE consumer (fetch streaming, NOT EventSource — POST
+routes) + pure frame parser (unit-tested) + Renderer seam + OutputChannel
+renderer -> first streaming capability (metadata-qa) end to end.
 ---
