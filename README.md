@@ -133,7 +133,9 @@ server, and REST API can't drift apart.
 
 The design decisions behind this — why a graph, why `MultiDiGraph`, why a
 hand-rolled REST client, why the renderer seam — are documented as **19
-Architecture Decision Records**. See [`docs/decisions/`](docs/decisions/).
+Architecture Decision Records**. For the full picture see
+[`docs/architecture.md`](docs/architecture.md); the decision trail with
+supersessions annotated is in [`docs/decisions/`](docs/decisions/).
 
 ---
 

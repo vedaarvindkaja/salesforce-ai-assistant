@@ -3502,4 +3502,29 @@ Deferred to Day 3 (as planned): docs/architecture.md (the deep dive; also feeds
 the blog). Day-2 stayed README-only.
 
 Next (Day 3): API reference (docs/rest-api.md) + architecture.md.
+
+## Week 14 Day 3 — API reference + architecture deep dive
+
+Two reference docs, both grounded in a reconcile of the actual code (not memory):
+- docs/rest-api.md — pulled the real route layer first. 5 capability routes +
+  GET /graph; SSE event contract (chunk → done | error); 422 (empty question) /
+  503 (graph-absent, precondition not 401); CapabilityRequest vs DebugLogRequest
+  (ADR-017 log-reference asymmetry); GraphSummary shape. One fully-worked example
+  (deployment-impact, real SSE stream) + a table for the rest. REST only — links
+  to docs/mcp-server.md for MCP rather than duplicating it.
+- docs/architecture.md — the deep dive: ADR-001 layers, the extract→cache→build→
+  query pipeline (+ a new brown build-pipeline diagram), MultiDiGraph rationale
+  (008→011), CAPABILITY_REGISTRY single-source + the agentic loop + 7 graph tools,
+  the shared loader (015) + cwd-independence, the streaming-vs-collected transport
+  split. Reuses the transport fan-out diagram; links the ADR index.
+- README Architecture section now points at docs/architecture.md (was decisions/
+  only). [optional tweak]
+
+Decision: the architecture BLOG POST (orphaned by the Day-1 README-first reorder)
+stays deferred — architecture.md carries ~80% of its content; draft the blog from
+it as a Day-6/7 or Week-15 item if hours allow. Not a Day-3 burden; flagged, not
+silently dropped.
+
+Next (Day 4-5): demo video + the hero GIF (the webview deployment-impact run) for
+the README's reserved slot.
 ---
