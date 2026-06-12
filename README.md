@@ -1,276 +1,243 @@
-# Salesforce AI Metadata Graph
+# Salesforce Graph
 
-> An AI-powered intelligence layer for Salesforce developers. Ask questions
-> about your org's metadata, dependencies, Apex, and Flows in natural language.
-> Open-core: MCP server and metadata extractor are open source; advanced
-> features are proprietary.
+**The AI metadata graph for Salesforce developers.** Map your org's dependencies
+— Apex, Flows, objects, triggers — into a queryable graph, then ask it questions
+in natural language. Find out what breaks *before* you ship.
 
-🚧 **Work in progress** — actively being built. See [ROADMAP.md](./ROADMAP.md) for
-the Phase 1 plan (15 weeks to portfolio launch).
+[![License: MIT](https://img.shields.io/badge/License-MIT-A0522D.svg)](LICENSE)
+![Tests](https://img.shields.io/badge/tests-344%20unit%20%2B%2025%20evals-7B4B2A.svg)
+![Python](https://img.shields.io/badge/python-3.11%2B-B07D4F.svg)
+
+<!-- HERO GIF: capture the webview deployment-impact run on demo day (Day 4-5), then embed here -->
 
 ---
 
-## Current status
+## "What breaks if I delete this field?"
 
-**Week 4 complete** ✅ — Salesforce OAuth 2.0 Web Server Flow with PKCE is
-working end-to-end. The backend can now authenticate against a real
-Salesforce org and run SOQL queries with transparent token refresh.
+A Salesforce org is a dependency tangle. A field feeds a Flow, which calls an
+Apex class, which is referenced by a trigger, which is covered by a test class.
+The connections are real but invisible — so change sets break things that look
+unrelated, and "is this safe to delete?" is a question nobody can answer with
+confidence.
 
-Next: metadata graph construction (Weeks 5-7).
+**Salesforce Graph extracts that web into an explicit dependency graph and puts
+an LLM in front of it.** Ask in plain English; get answers grounded in the actual
+graph, with the dependency path traced — not a guess from a model that never saw
+your org.
 
-## Project vision
+```
+> What is the deployment impact of changing the Opportunity object?
 
-A developer-focused Salesforce intelligence platform with five core capabilities:
+Changing Opportunity affects 6 components across 2 hops:
+  OpportunityTrigger → TriggerDispatcher → OpportunityDomain → PricingService
+  ...and the Flow Opportunity_Sales_Orchestration_Flow (via an Apex action).
+```
 
-1. **Metadata Q&A** — Natural language questions about org structure and dependencies
-2. **Apex explanation and refactoring** — Intelligent code analysis with full metadata context
-3. **SOQL generation** — Natural language to SOQL using your org's actual schema
-4. **Deployment impact analysis** — Trace what could break when you deploy a change
-5. **Debug log analysis** — Root-cause analysis with code and metadata context
+---
 
-Accessible via MCP server (open source, works with Claude Desktop, Cursor, Claude Code)
-and a VS Code extension. Built for the developer persona first; admin, sales,
-and support features may come in Phase 2.
+## Capabilities
 
-## What's working today
+Five capabilities, each grounded in the metadata graph rather than the model's
+priors:
 
-- **Real Salesforce authentication** via OAuth 2.0 Web Server Flow with PKCE
-- **Transparent token refresh** — access tokens auto-refresh on 401, refresh tokens rotate
-- **Mock + real client architecture** — swap between mock and real via `USE_MOCK_DATA` env var
-- **9 REST endpoints** — 4 account endpoints + 3 auth endpoints + /health + /docs
-- **19 automated tests** — including 5 dedicated tests for OAuth refresh-on-401 lifecycle
-- Async-first FastAPI backend with concurrent query support
-- Lifespan-managed shared client (mock or real, decided at startup)
-- Pydantic v2 models with full type safety
-- Tests are hermetic — produce the same result regardless of `.env` state
+| Capability | Ask it | Example |
+|---|---|---|
+| **Metadata Q&A** | structure & dependency questions | *"What references `PricingService`?"* |
+| **Apex explanation** | explain a class/trigger with its real dependencies | *"Explain this trigger and what it touches."* |
+| **SOQL generation** | natural language → SOQL using your org's actual fields | *"Opportunities created last quarter for accounts with no contacts."* |
+| **Deployment impact** | blast-radius of a change before you deploy | *"What breaks if I change the Opportunity object?"* |
+| **Debug-log analysis** | root-cause a log against the graph + source | *"Why did this transaction fail?"* |
 
-## Tech stack
+<!-- TODO: confirm this shows a capability response; rename caption if not -->
+![A capability answered through the REST API](docs/screenshots/03-api-response.png)
+*A capability response, streamed from the REST API.*
 
-**Currently in the codebase**
-- Python 3.11+ with FastAPI
-- Pydantic v2 (type-safe data validation)
-- httpx (async HTTP client)
-- python-dotenv (env var loading)
-- pytest + TestClient + httpx.MockTransport (integration + unit testing)
+---
 
-**Coming in upcoming weeks**
-- Salesforce Metadata API + Tooling API clients (Week 5)
-- networkx-based metadata graph with SQLite persistence (Weeks 6-7)
-- Apex parser and Flow analyzer (Week 7)
-- Anthropic Claude API with tool use (Weeks 8-9)
-- pytest-based evaluation harness (Week 10)
-- MCP server using the Anthropic Python SDK (Week 11)
-- TypeScript + VS Code Extension API (Week 13)
+## Four transports, one core
 
-## Architecture (target — being built through Phase 1)
-┌────────────────────────────────────────────────────────────────┐
-│                    USER-FACING INTERFACES                       │
-├────────────────────────────────────────────────────────────────┤
-│  VS Code Ext  │  MCP Server (stdio)  │  REST API  │  CLI       │
-│  (Week 13)    │  (Week 11)           │  (current) │  (testing) │
-└──────┬─────────────┬────────────────────┬───────────┬──────────┘
-│             │                    │           │
-└─────────────┴────────────────────┴───────────┘
-│
-▼
-┌────────────────────────────────────────────────────────────────┐
-│              ORCHESTRATION LAYER (Weeks 8-9)                    │
-│  Receives requests, builds context, calls Claude with tools     │
-└──────────────────────────┬─────────────────────────────────────┘
-│
-┌──────────────┼──────────────┐
-▼              ▼              ▼
-┌────────────────┐ ┌──────────────┐ ┌──────────────────────┐
-│ METADATA GRAPH │ │ CODE INTEL   │ │ CONTEXT RETRIEVAL    │
-│ (Weeks 5-6)    │ │ (Week 7)     │ │ (Week 8)             │
-│ Objects/Fields │ │ Apex parser  │ │ Token-efficient      │
-│ Relationships  │ │ Flow XML     │ │ context for Claude   │
-│ Dependencies   │ │ Triggers     │ │                      │
-└───────┬────────┘ └──────┬───────┘ └─────────┬────────────┘
-│                 │                   │
-└─────────────────┼───────────────────┘
-│
-▼
-┌────────────────────────────────────────────────────────────────┐
-│              SALESFORCE DATA LAYER                              │
-│  Metadata API + Tooling API (Week 5)                            │
-│  REST API (✅ working — Week 4)                                 │
-│  OAuth 2.0 Web Server Flow + PKCE (✅ working — Week 4)         │
-│  SQLite local cache (Week 7)                                    │
-└─────────────────────────────────────────────────────────────────┘
+The same intelligence core is reachable four ways — a CLI, an MCP server (for
+Claude Desktop / Claude Code / Augment AI), a REST API, and a VS Code extension.
+The extension rides the REST spine; the other three share one graph loader and
+one capability registry, so a capability behaves identically everywhere.
 
-## Project structure
-salesforce-ai-assistant/
-├── backend/
-│   ├── app/
-│   │   ├── main.py                                # FastAPI entry point + lifespan
-│   │   ├── dependencies.py                        # Dependency injection helpers
-│   │   ├── models/
-│   │   │   └── salesforce.py                      # Pydantic models for SF data
-│   │   ├── salesforce/                            # Salesforce data layer
-│   │   │   ├── auth.py                            # OAuth 2.0 + PKCE logic
-│   │   │   ├── oauth_models.py                    # OAuth response models
-│   │   │   ├── token_storage.py                   # Token persistence (gitignored file)
-│   │   │   ├── rest_api.py                        # Real OAuth-backed async REST client
-│   │   │   └── mocks/
-│   │   │       └── rest_mock.py                   # Mock client for development
-│   │   └── interfaces/                            # All consumer-facing entry points
-│   │       └── rest_api/
-│   │           └── routes/
-│   │               ├── accounts.py                # /accounts/* endpoints
-│   │               └── auth.py                    # /auth/* endpoints
-│   ├── tests/
-│   │   ├── test_endpoints.py                      # 14 pytest tests (mock client)
-│   │   └── test_salesforce_client.py              # 5 pytest tests (real client + refresh)
-│   ├── requirements.txt
-│   ├── .env.example                               # Template (.env is gitignored)
-│   └── tokens.json                                # OAuth tokens (gitignored)
-├── README.md
-├── ROADMAP.md                                     # Phase 1 15-week plan
-├── NOTES.md                                       # Development journal
-├── TEST_URLS.md                                   # Manual testing reference
-├── LICENSE                                        # MIT
-└── .gitignore                                     # Protects secrets
+```mermaid
+flowchart TB
+    subgraph T["Four transports — one intelligence core"]
+        CLI["CLI<br/>ask_cli.py"]
+        MCP["MCP server<br/>FastMCP · stdio"]
+        REST["REST API<br/>FastAPI · SSE"]
+        EXT["VS Code extension<br/>v0.1.0"]
+    end
 
-Future directories (will appear as Phase 1 progresses):
-- `backend/app/intelligence/` — metadata graph, code intel, orchestration (Weeks 5-9)
-- `backend/app/interfaces/mcp_server/` — MCP protocol server (Week 11)
-- `vscode-extension/` — TypeScript VS Code extension (Week 13)
-- `evals/` — evaluation test cases and runners (Week 10)
+    EXT -->|HTTP + SSE| REST
+    CLI --> REG
+    MCP --> REG
+    REST --> REG
 
-## Running locally
+    subgraph C["Shared core"]
+        REG["CAPABILITY_REGISTRY · capabilities.py<br/>single source · 5 capabilities<br/>qa · apex · soql · impact · debuglog"]
+        ORCH["Orchestration<br/>Claude client · 5 prompts · 7 graph tools"]
+        BOOT["bootstrap.load_graph · ADR-015<br/>one loader · CLI + MCP + REST"]
+        REG --> ORCH
+    end
+
+    ORCH -->|7 graph tools| GRAPH
+    ORCH -->|LLM| CLAUDE["Claude API"]
+    BOOT -->|loads + builds| GRAPH
+
+    subgraph D["Intelligence + data"]
+        GRAPH["MetadataGraph<br/>networkx MultiDiGraph · 57 nodes / 172 edges"]
+        CACHE["MetadataCache · SQLite"]
+        GRAPH -.built from.-> CACHE
+    end
+
+    SF["Salesforce org<br/>Tooling + Metadata API"] -->|extractor| CACHE
+
+    classDef transport fill:#7B4B2A,stroke:#4A2C16,color:#FFF6EC,stroke-width:2px;
+    classDef core fill:#B07D4F,stroke:#5C3A1E,color:#2A1810,stroke-width:2px;
+    classDef data fill:#D9B38C,stroke:#8B5E3C,color:#2A1810,stroke-width:2px;
+    classDef external fill:#5C3A1E,stroke:#3E2412,color:#FFF6EC,stroke-width:2px;
+
+    class CLI,MCP,REST,EXT transport;
+    class REG,ORCH,BOOT core;
+    class GRAPH,CACHE data;
+    class SF,CLAUDE external;
+
+    style T fill:#F3E6D7,stroke:#8B5E3C,color:#4A2C16;
+    style C fill:#F0E0CC,stroke:#8B5E3C,color:#4A2C16;
+    style D fill:#EFE2D0,stroke:#8B5E3C,color:#4A2C16;
+```
+
+<!-- TODO: confirm this shows the REST API docs; rename caption if not -->
+![The REST API's interactive OpenAPI docs](docs/screenshots/01-api-docs.png)
+*The REST API — five capability routes plus the read-only graph endpoint.*
+
+---
+
+## Architecture
+
+The graph is the moat. A Salesforce org is extracted into a local **SQLite
+cache** (Apex classes, triggers, and Flows, via the Tooling and Metadata APIs),
+then built into a **networkx `MultiDiGraph`** — `MultiDiGraph` because two
+components can relate more than one way at once (a `REFERENCES` edge *and* a
+`CALLS` edge between the same pair), and a plain digraph would silently drop one.
+
+Above the graph sits a thin intelligence layer: a `CAPABILITY_REGISTRY`
+(the single source of truth for what each capability is and which graph tools it
+may call) and an orchestration loop that hands Claude **seven graph tools**
+(`find_dependencies`, `analyze_impact`, `get_source`, …) and lets it traverse the
+graph to answer. Every transport loads the graph through one shared,
+working-directory-independent loader (`bootstrap.load_graph`), so the CLI, MCP
+server, and REST API can't drift apart.
+
+The design decisions behind this — why a graph, why `MultiDiGraph`, why a
+hand-rolled REST client, why the renderer seam — are documented as **19
+Architecture Decision Records**. See [`docs/decisions/`](docs/decisions/).
+
+---
+
+## Quickstart
 
 ### Prerequisites
-- Python 3.11+
-- Git
-- A Salesforce Developer Edition org (free at developer.salesforce.com)
 
-### Setup
+- Python 3.11+
+- A Salesforce Developer Edition org (free at [developer.salesforce.com](https://developer.salesforce.com))
+- An Anthropic API key (for the capability layer)
+
+### 1. Install
 
 ```bash
-git clone https://github.com/yourusername/salesforce-ai-assistant.git
+git clone https://github.com/vedaarvindkaja/salesforce-ai-assistant.git
 cd salesforce-ai-assistant/backend
 pip install -r requirements.txt
 ```
 
-### Salesforce side — one-time setup
+### 2. Connect your org (one-time)
 
-1. In your dev org: Setup → App Manager → New External Client App
-2. Enable OAuth Settings; Callback URL: `http://localhost:8000/auth/callback`
-3. Selected Scopes: `api`, `refresh_token`, `id`
-4. Enable: Authorization Code and Credentials Flow, PKCE required, Refresh Token Rotation
-5. Save, wait 10 minutes for propagation
-6. Copy the Consumer Key + Consumer Secret
+In your dev org: **Setup → App Manager → New External Client App**. Enable OAuth,
+set the callback URL to `http://localhost:8000/auth/callback`, select scopes
+`api`, `refresh_token`, `id`, and enable PKCE + Refresh Token Rotation. Save, wait
+~10 minutes for propagation, then copy the Consumer Key and Secret.
 
-### Environment
-
-Copy the template and fill in the OAuth values:
+Copy the env template and fill in those values:
 
 ```bash
 cp .env.example .env
-# Edit .env with your Consumer Key and Consumer Secret
+# Set SALESFORCE_CLIENT_ID / _SECRET and ANTHROPIC_API_KEY
+# Set USE_MOCK_DATA=false to use the real org
 ```
 
-The `USE_MOCK_DATA` toggle in `.env`:
-- `true` (default) — uses the in-memory mock client; no Salesforce required
-- `false` — uses the real OAuth-backed client; requires valid tokens
+Authenticate by visiting `http://localhost:8000/auth/login` once (run the server
+first — step 4).
 
-### Start the server
+### 3. Build the graph
+
+Extract your org's Apex, triggers, and Flows into the local cache:
+
+```bash
+python -m scripts.extract_to_cache
+```
+
+This is what the graph is built from — the capabilities return 503 until it
+exists.
+
+### 4. Ask it something
+
+**CLI:**
+
+```bash
+python ask_cli.py --mode impact "What breaks if I change the Opportunity object?"
+```
+
+**REST API** (also what the VS Code extension talks to):
 
 ```bash
 uvicorn app.main:app --reload
+# POST http://localhost:8000/api/v1/deployment-impact  (streams Server-Sent Events)
 ```
 
-Server runs at `http://localhost:8000`. Startup log will say `MOCK` or `REAL`
-depending on `USE_MOCK_DATA`.
+**MCP server** (Claude Desktop / Claude Code / Augment AI) — see
+[`docs/mcp-server.md`](docs/mcp-server.md) for per-client config.
 
-### Authenticate (real mode only)
+**VS Code extension** — install `vscode-extension/salesforce-graph-0.1.0.vsix`
+(Extensions panel → ⋯ → *Install from VSIX…*), point `salesforceGraph.apiBaseUrl`
+at your running API, and use the palette or right-click an `.cls`/`.log` file.
+See [`vscode-extension/README.md`](vscode-extension/README.md).
 
-If `USE_MOCK_DATA=false`, visit `http://localhost:8000/auth/login` in a browser
-to run through the OAuth flow. Tokens persist to `tokens.json` (gitignored)
-and survive server restarts.
+---
 
-### Try it
+## Open source
 
-- `http://localhost:8000/docs` — interactive API documentation
-- `http://localhost:8000/accounts/` — list accounts (mock or real org)
-- `http://localhost:8000/auth/status` — check authentication state
-- See [`TEST_URLS.md`](./TEST_URLS.md) for the full list of testable URLs
+Everything in Phase 1 is open source under the [MIT License](LICENSE) — the
+metadata extractor, the graph, the intelligence core, and all four transports.
 
-### Run tests
+This is structured as an open core: advanced or enterprise capabilities may be
+offered under separate terms in a later phase. Today there is no paywalled tier —
+Phase 1 *is* the open core.
 
-```bash
-cd backend
-pytest tests/ -v
-```
+---
 
-All 19 tests should pass in ~12 seconds. Tests are hermetic — they force
-`USE_MOCK_DATA=true` via `monkeypatch.setenv`, so they don't care what's
-in your `.env`.
+## Project status
 
-## Key technical decisions
+**Phase 1 — portfolio-ready, single-user.** This is a working, end-to-end
+platform, not a hardened multi-tenant product, and it states its maturity plainly:
 
-A few choices and why:
+- **Single-user / local.** No API-key auth or rate limiting yet (parked; trigger:
+  serves more than one user).
+- The graph rebuilds on load (parked; trigger: rebuild exceeds ~2s).
+- Field-grain nodes and Flow record-operation edges are deferred (parked; trigger:
+  an eval fails for field-grain reasons).
 
-**FastAPI over Flask/Django** — Async-native (matches Salesforce I/O patterns),
-auto-generated OpenAPI docs, Pydantic integration is unmatched.
+<!-- TODO: confirm this shows the test run; rename caption if not -->
+![Test suite passing](docs/screenshots/02-tests-passing.png)
+*344 unit tests + 25 semantic evals, green.*
 
-**Layered architecture (`salesforce/`, `intelligence/`, `interfaces/`)** —
-Separates concerns by *what they do*, not by file type. Lets Week 11 add an
-MCP server without disturbing anything else.
+**By the numbers:** 57-node / 172-edge graph · 5 capabilities · 4 transports ·
+344 unit tests + 25 semantic evals · 19 ADRs.
 
-**External Client App over classic Connected App** — Salesforce is phasing
-out Connected Apps in newer org versions. External Client Apps now have full
-Web Server Flow + PKCE + RTR support. Using the forward path on a portfolio
-project signals current Salesforce knowledge.
-
-**OAuth Web Server Flow with PKCE** — The username-password flow is deprecated
-and was broken in our Week 2 attempt. PKCE is mandatory for External Client
-Apps as of May 2026. Web Server Flow is what real dev tools use.
-
-**Mock client + real client via duck typing** — Same async interface
-(`__aenter__`, `authenticate`, `query`, `query_all`), no shared inheritance.
-Phase 1 keeps it simple; if we grow more methods/clients, a `Protocol` will
-formalize the contract.
-
-**Transparent refresh-on-401** — Access tokens expire (~2 hours);
-SalesforceClient handles refresh internally so endpoint code never sees auth
-complexity. Caller writes `await client.query(soql)` — nothing else.
-
-**Tests must be hermetic** — `monkeypatch.setenv` in test fixtures so tests
-behave identically regardless of `.env` state. Apex enforces this via `@isTest`
-semantics; Python doesn't, so we design it in deliberately.
-
-**Dependency injection for HTTP client** — `auth.py`'s functions accept an
-optional `httpx.AsyncClient` parameter. Lets tests inject `MockTransport`,
-lets production code share connection pools. The Apex parallel is
-`HttpCalloutMock` injection via `Test.setMock()`.
-
-## Roadmap (high level)
-
-Detailed week-by-week plan in [ROADMAP.md](./ROADMAP.md).
-
-- [x] Foundation: Python OOP, Pydantic, async (Weeks 1-2)
-- [x] FastAPI backend with mock data + tests (Week 3)
-- [x] **Architecture refactor + Salesforce OAuth 2.0 + real REST client (Week 4)**
-- [ ] Metadata API extraction + graph construction (Weeks 5-7) ← next
-- [ ] Claude integration with tool use (Weeks 8-9)
-- [ ] Evaluation harness with 100+ test cases (Week 10)
-- [ ] MCP server for Claude Desktop / Cursor / Claude Code (Week 11)
-- [ ] REST API + VS Code extension (Weeks 12-13)
-- [ ] Documentation, demo video, public launch (Weeks 14-15)
-
-## About this project
-
-Built by a senior Salesforce developer (10 years of enterprise CRM experience)
-learning modern AI engineering. Goal: demonstrate production-grade patterns
-for integrating LLMs with enterprise SaaS systems — specifically, building
-a metadata-aware intelligence layer that understands what's in your Salesforce
-org and helps developers reason about it.
-
-Building in public — follow commits to see the journey.
+---
 
 ## License
 
-MIT for open-source components — see [LICENSE](./LICENSE).
-Some advanced features may be released under different terms in future phases.
+[MIT](LICENSE)

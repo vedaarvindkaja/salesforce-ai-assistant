@@ -3471,4 +3471,35 @@ diff-able).
 
 Next (Day 2): root README rewrite onto the locked skeleton, with the diagram and
 the ADR-index link slotted in.
+
+## Week 14 Day 2 — Root README rewrite + extension README cross-link
+
+Reconcile-before-writing earned its keep twice:
+- The root README was genuinely Week-4 backend-setup state (REST/OAuth/env), NOT
+  "further along" — my Day-1-tail read conflated it with the EXTENSION README that
+  was also open in the editor. Corrected at kickoff before scoping. So it was a
+  substantial rewrite (rebuild the top half: hero, value prop, 5 capabilities,
+  4 transports, architecture; salvage + update the bottom half: setup/quickstart).
+- Screenshots live in docs/screenshots/, not docs/images/ (took the brief's
+  "images" too literally). And the 6 in-editor extension shots the brief/Week-13
+  NOTES described don't exist on disk — only 3 API/test shots (01-api-docs,
+  02-tests-passing, 03-api-response). Reworked to a TEXT hero (the impact-query
+  block carries it) + the 3 real shots placed where they earn it (REST docs →
+  Transports, response → Capabilities, tests → Status) + one explicit HERO GIF
+  slot deferred to demo day (Day 4-5), where that webview capture was always
+  scheduled.
+
+Shipped:
+- Root README: platform front door — "what breaks if I delete X" value prop, the
+  5 capabilities, the brown transport-fan-out diagram embedded (renders natively
+  on GitHub), architecture section linking docs/decisions/, quickstart with the
+  missing cache-build step (python -m scripts.extract_to_cache), open-source-now
+  framing, status with parked-triggers stated plainly. 8 sections.
+- Extension README: cross-linked to the platform (absolute GitHub URLs so they
+  resolve inside the .vsix) + added the populated-cache prerequisite.
+
+Deferred to Day 3 (as planned): docs/architecture.md (the deep dive; also feeds
+the blog). Day-2 stayed README-only.
+
+Next (Day 3): API reference (docs/rest-api.md) + architecture.md.
 ---

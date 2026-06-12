@@ -1,21 +1,32 @@
 # Salesforce Graph (VS Code extension)
 
-In-editor access to the Salesforce AI metadata-graph intelligence platform. Ask
+In-editor access to the [Salesforce Graph platform](https://github.com/vedaarvindkaja/salesforce-ai-assistant)
+— the AI metadata-graph intelligence layer for Salesforce developers. Ask
 questions about your org's metadata dependency graph — and explain Apex, assess
-deployment impact, generate SOQL, and root-cause debug logs — without leaving
-the editor. Answers stream live from the local REST API and render as formatted
+deployment impact, generate SOQL, and root-cause debug logs — without leaving the
+editor. Answers stream live from the local REST API and render as formatted
 Markdown.
+
+> This extension is one of four transports over a shared intelligence core. For
+> the full picture — the metadata graph, the other transports, and the
+> architecture — see the [project README](https://github.com/vedaarvindkaja/salesforce-ai-assistant#readme).
 
 ## Requirements
 
-The Salesforce Graph REST API must be running locally. From the project's
-`backend/` directory:
+The Salesforce Graph REST API must be running locally, **with a populated
+metadata graph**. From the project's `backend/` directory:
 
 ```
+# one-time: build the graph from your org (see the project README Quickstart)
+python -m scripts.extract_to_cache
+
+# then start the API
 uvicorn app.main:app --reload
 ```
 
-The extension talks to it at `http://127.0.0.1:8000` by default.
+The extension talks to it at `http://127.0.0.1:8000` by default. Until the graph
+is built, capability calls return a "not ready" (503) state, shown in the status
+bar.
 
 ## Commands
 
