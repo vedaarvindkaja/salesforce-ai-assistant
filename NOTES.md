@@ -3438,4 +3438,37 @@ Week-13 retrospective:
   + process management (parked, triggers unmet).
 
 ROADMAP reconciled (Yeoman/API-key-UI/sidebar/Day-5-client stale entries -> actual).
+
+## Week 14 Day 1 — ADR housekeeping + architecture diagram
+
+Docs week opened with reconciliation, not prose. Decisions locked at kickoff:
+README-first reorder (ahead of the blog; the diagram + ADR index are the blog's
+inputs too); open-SOURCE-now framing, dropping "open-core + proprietary" (the
+proprietary tier doesn't exist yet — Phase 1 IS the open core; overclaim is the
+job-hunt risk); Mermaid-in-repo over an image (GitHub renders it natively,
+diff-able).
+
+- ADR-018 (Renderer seam) + ADR-019 (hand-rolled client, with fetch-vs-EventSource
+  folded in as forced-by-POST-routes rationale) promoted from Week-13 NOTES to
+  standalone files. The other two Week-13 candidates (OutputChannel-first swap;
+  it's a consequence of the seam) stayed in NOTES — promoting all four would
+  dilute the set; the restraint is the signal.
+- Drift pass over 001-017 (flag, don't rewrite): ADR-008's DiGraph superseded by
+  ADR-011 (MultiDiGraph); ADR-016 "four routes" now five (debug-log-analysis);
+  ADR-006 string-scan "eliminated by Week-7 parser" prediction refined (parser
+  added CALLS/USES_OBJECT alongside, didn't replace it); ADR-009 cost refined to
+  SQLite I/O churn. The headline README/ROADMAP drifts (Cursor, "4 capabilities")
+  do NOT appear in the ADRs — the decision log didn't rot, the front-door docs did.
+- FINDING: docs/decisions/ held only 001-003 as files; 004-017 live inline in
+  NOTES.md. Built the index (docs/decisions/README.md) as option A — file-links
+  for the 5 standalone ADRs, NOTES pointers for 004-017 — over a 14-file backfill
+  that would breach the docs-week scope guard. Backfill is triggered: before the
+  Week-15 public link, or if a reviewer trips on it.
+- Transport fan-out diagram drafted (Mermaid, brown palette). Accuracy calls: the
+  shared loader is labelled CLI+MCP+REST (the extension loads nothing — it's a
+  REST client); graph is a MultiDiGraph (ADR-011). Lands in README + architecture.md
+  on Day 2.
+
+Next (Day 2): root README rewrite onto the locked skeleton, with the diagram and
+the ADR-index link slotted in.
 ---
