@@ -3549,4 +3549,33 @@ Carry to Day 7 (close-out): ADR-020; ROADMAP reconcile (move demo video to Week 
 fix the Phase-2-vs-Phase-5 multi-tenant-SaaS inconsistency + add the hosted/
 Augment-style entry & migration path; add the credential-rotation pre-public
 blocker); README hero-slot comment cleanup (video parked); blog still optional.
+
+## PRE-PUBLIC SECURITY GATE — must clear before flipping the repo public (Week 15)
+
+Context: secrets appeared in early screenshots (username-password era). Rotation
+makes any leaked secret dead — do it regardless of what the history audit finds.
+This gate replaces the stale "rotate Consumer Secret / password / token" note;
+the current secret surface and the git-history risk are below.
+
+### 1. Rotate (in order)
+- [ ] Anthropic API key — Console: revoke old, create new, update ANTHROPIC_API_KEY in .env
+- [ ] Salesforce Consumer Secret — regenerate on the External Client App, update SALESFORCE_CLIENT_SECRET in .env
+- [ ] OAuth tokens — revoke the app's tokens in the org, delete tokens.json + backend/tokens.json,
+      re-run http://localhost:8000/auth/login to re-mint (local cache in data/ is unaffected)
+- [ ] Salesforce password + security token — ONLY if login creds (not just the app secret) were shown
+
+### 2. Audit git history (public = ALL past commits are visible, not just current files)
+- [ ] git log --all --oneline -- .env tokens.json backend/tokens.json sf_secrets.py   (any output = was committed)
+- [ ] git log -p --all -S "SALESFORCE_CLIENT_SECRET"
+- [ ] git log -p --all -S "sk-ant"
+- [ ] If dirty: scrub those files from ALL history (git filter-repo / BFG) BEFORE the first public push, then force-push
+
+### 3. Final gate
+- [ ] git status clean; .gitignore still covers .env, tokens.json, sf_secrets.py
+- [ ] Review NOTES.md + docs/ for any sensitive value before it goes public (incl. this entry once acted on)
+- [ ] docs/screenshots/ + demo shots: no live secret, full org URL, or token visible
+- [ ] Only then: flip the repo to public
+
+### 2. Audit git history — DONE (Week 14), CLEAN
+- Verified: no secret files ever committed; only sk-ant- hit was the .env.example placeholder. No scrub needed.
 ---
