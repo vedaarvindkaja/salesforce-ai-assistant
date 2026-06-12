@@ -3527,4 +3527,26 @@ silently dropped.
 
 Next (Day 4-5): demo video + the hero GIF (the webview deployment-impact run) for
 the README's reserved slot.
+
+## Week 14 Day 6 — Open-source preparation
+
+Reconcile: LICENSE already present (root + extension, MIT); open-vs-closed already
+decided (all MIT, Phase 1 = the open core, stated in README). So Day 6 = the
+community scaffolding that didn't exist yet:
+- CONTRIBUTING.md — dev setup, `python -m pytest` discipline, eval-as-regression,
+  layered + single-source conventions, the ADR bar, scope-first (new directions →
+  Phase 2+ backlog, open an issue first).
+- SECURITY.md — private vuln reporting via the GitHub Security tab; secrets
+  gitignored + local-only posture; no caller auth in Phase 1; rotate-on-exposure.
+- .github/ISSUE_TEMPLATE/ — bug_report (asks for the transport + graph state +
+  no-secrets reminder) and feature_request (scope-check: Phase-1 improvement vs
+  Phase 2+ direction).
+
+Demo video PARKED to Week 15 (it's a launch asset — embedded in the LinkedIn/HN
+announcement). Removed from Week 14 scope.
+
+Carry to Day 7 (close-out): ADR-020; ROADMAP reconcile (move demo video to Week 15;
+fix the Phase-2-vs-Phase-5 multi-tenant-SaaS inconsistency + add the hosted/
+Augment-style entry & migration path; add the credential-rotation pre-public
+blocker); README hero-slot comment cleanup (video parked); blog still optional.
 ---
